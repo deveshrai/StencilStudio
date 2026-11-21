@@ -4,6 +4,11 @@ import { RibbonButton, RibbonGroup, RibbonTab, LabeledSlider } from "ribbon.slin
 
 export { Theme, Hint }
 
+export struct PickerItem {
+    name: string,
+    detail: string,
+}
+
 export struct SwatchItem {
     color: color,
     name: string,
@@ -102,6 +107,20 @@ export component AppWindow inherits Window {
     in property <[SwatchItem]> swatches;
     in-out property <int> selected-swatch: -1;
 
+    // ---- Platform / dialogs ----
+    in property <bool> native-dialogs: true;
+    // Desktop-style menu bar; hidden on mobile where everything lives in the ribbon.
+    in property <bool> show-menu-bar: true;
+    in-out property <bool> alert-visible;
+    in property <string> alert-title;
+    in property <string> alert-text;
+    in-out property <bool> picker-visible;
+    in property <string> picker-title;
+    in property <string> picker-empty-text;
+    in property <[PickerItem]> picker-items;
+    callback picker-chosen(int);
+    callback picker-refresh();
+
     // ---- View state ----
     in-out property <int> view-mode: 3; // 0 original, 1 reduced, 2 outlines, 3 split
     in-out property <bool> fit-mode: true;
@@ -182,6 +201,7 @@ export component AppWindow inherits Window {
 
     // ================= Menu bar =================
     MenuBar {
+        visible: root.show-menu-bar;
         Menu {
             title: "File";
             MenuItem { title: "Open Image…"; shortcut: @keys(Control + O); activated => { root.open-image(); } }
@@ -258,6 +278,11 @@ export component AppWindow inherits Window {
     }
 
     VerticalLayout {
+        // Keep clear of status / navigation bars on mobile (0 on desktop).
+        padding-top: root.safe-area-insets.top;
+        padding-bottom: root.safe-area-insets.bottom;
+        padding-left: root.safe-area-insets.left;
+        padding-right: root.safe-area-insets.right;
         // ================= Ribbon =================
         Rectangle {
             background: Theme.ribbon-tabs;
@@ -284,6 +309,13 @@ export component AppWindow inherits Window {
             background: Theme.ribbon;
             height: 96px;
             Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+            // Scrolls sideways when the window is narrower than the ribbon (tablets, phones).
+            // Not finger-draggable (that would steal drags from the sliders); use the
+            // ‹ › buttons, which appear only when the ribbon overflows.
+            ribbon-flick := Flickable {
+            interactive: false;
+            viewport-width: max(self.width, 1240px);
+            animate viewport-x { duration: 180ms; easing: ease-out; }
 
             // ---- Home ----
             if root.ribbon-tab == 0: HorizontalLayout {
@@ -592,6 +624,29 @@ export component AppWindow inherits Window {
                     RibbonButton { icon: @image-url("icons/pdf.svg"); text: "PDF Packet"; enabled: false; tooltip: "Numbered outline + legend packet (next milestone)"; }
                 }
             }
+            }
+            if ribbon-flick.viewport-x < 0: Rectangle {
+                x: 0px;
+                width: 34px;
+                height: parent.height - 1px;
+                background: @linear-gradient(90deg, Theme.ribbon 60%, #00000000 100%);
+                Text { text: "‹"; color: Theme.text; font-size: 26px; }
+                TouchArea {
+                    clicked => { ribbon-flick.viewport-x = min(0px, ribbon-flick.viewport-x + ribbon-flick.width * 0.6); }
+                }
+            }
+            if ribbon-flick.viewport-x + ribbon-flick.viewport-width > ribbon-flick.width + 1px: Rectangle {
+                x: parent.width - self.width;
+                width: 34px;
+                height: parent.height - 1px;
+                background: @linear-gradient(90deg, #00000000 0%, Theme.ribbon 40%);
+                Text { text: "›"; color: Theme.text; font-size: 26px; }
+                TouchArea {
+                    clicked => {
+                        ribbon-flick.viewport-x = max(ribbon-flick.width - ribbon-flick.viewport-width, ribbon-flick.viewport-x - ribbon-flick.width * 0.6);
+                    }
+                }
+            }
         }
 
         // ================= Workspace =================
@@ -736,6 +791,11 @@ export component AppWindow inherits Window {
                 property <length> img-x: (self.width - self.disp-w) / 2 + (root.fit-mode ? 0px : root.pan-x);
                 property <length> img-y: (self.height - self.disp-h) / 2 + (root.fit-mode ? 0px : root.pan-y);
                 property <ImageRendering> rendering: root.effective-zoom >= 2 ? ImageRendering.pixelated : ImageRendering.smooth;
+                property <float> pinch-start-zoom: 1;
+                property <length> pinch-start-px;
+                property <length> pinch-start-py;
+                property <length> pinch-start-cx;
+                property <length> pinch-start-cy;
                 property <length> drag-start-x;
                 property <length> drag-start-y;
 
@@ -788,39 +848,65 @@ export component AppWindow inherits Window {
                     }
                 }
 
-                pan-area := TouchArea {
+                // Two-finger pinch (touchscreens, trackpads) zooms around the gesture centre;
+                // moving both fingers pans.
+                pinch := ScaleRotateGestureHandler {
                     enabled: root.has-image;
-                    mouse-cursor: self.pressed ? MouseCursor.grabbing : MouseCursor.default;
-                    pointer-event(ev) => {
-                        if (ev.kind == PointerEventKind.down) {
-                            if (root.fit-mode) {
-                                root.zoom = root.fit-zoom;
-                                root.pan-x = 0px;
-                                root.pan-y = 0px;
-                                root.fit-mode = false;
-                            }
-                            canvas.drag-start-x = root.pan-x;
-                            canvas.drag-start-y = root.pan-y;
+                    started => {
+                        if (root.fit-mode) {
+                            root.zoom = root.fit-zoom;
+                            root.pan-x = 0px;
+                            root.pan-y = 0px;
+                            root.fit-mode = false;
                         }
+                        canvas.pinch-start-zoom = root.zoom;
+                        canvas.pinch-start-px = root.pan-x;
+                        canvas.pinch-start-py = root.pan-y;
+                        canvas.pinch-start-cx = self.center.x;
+                        canvas.pinch-start-cy = self.center.y;
                     }
-                    moved => {
-                        if (self.pressed) {
-                            root.pan-x = canvas.drag-start-x + (self.mouse-x - self.pressed-x);
-                            root.pan-y = canvas.drag-start-y + (self.mouse-y - self.pressed-y);
-                        }
+                    updated => {
+                        let z = clamp(canvas.pinch-start-zoom * self.scale, 0.05, 32.0);
+                        let r = z / canvas.pinch-start-zoom;
+                        root.pan-x = self.center.x - canvas.width / 2 - (canvas.pinch-start-cx - canvas.width / 2 - canvas.pinch-start-px) * r;
+                        root.pan-y = self.center.y - canvas.height / 2 - (canvas.pinch-start-cy - canvas.height / 2 - canvas.pinch-start-py) * r;
+                        root.zoom = z;
                     }
-                    scroll-event(ev) => {
-                        if (ev.modifiers.control || ev.modifiers.meta) {
-                            root.zoom-at(ev.delta-y > 0 ? 1.12 : 1 / 1.12, self.mouse-x, self.mouse-y);
-                        } else {
-                            if (root.fit-mode) {
-                                root.zoom = root.fit-zoom;
-                                root.fit-mode = false;
+
+                    pan-area := TouchArea {
+                        enabled: root.has-image;
+                        mouse-cursor: self.pressed ? MouseCursor.grabbing : MouseCursor.default;
+                        pointer-event(ev) => {
+                            if (ev.kind == PointerEventKind.down) {
+                                if (root.fit-mode) {
+                                    root.zoom = root.fit-zoom;
+                                    root.pan-x = 0px;
+                                    root.pan-y = 0px;
+                                    root.fit-mode = false;
+                                }
+                                canvas.drag-start-x = root.pan-x;
+                                canvas.drag-start-y = root.pan-y;
                             }
-                            root.pan-x += ev.delta-x;
-                            root.pan-y += ev.delta-y;
                         }
-                        accept
+                        moved => {
+                            if (self.pressed) {
+                                root.pan-x = canvas.drag-start-x + (self.mouse-x - self.pressed-x);
+                                root.pan-y = canvas.drag-start-y + (self.mouse-y - self.pressed-y);
+                            }
+                        }
+                        scroll-event(ev) => {
+                            if (ev.modifiers.control || ev.modifiers.meta) {
+                                root.zoom-at(ev.delta-y > 0 ? 1.12 : 1 / 1.12, self.mouse-x, self.mouse-y);
+                            } else {
+                                if (root.fit-mode) {
+                                    root.zoom = root.fit-zoom;
+                                    root.fit-mode = false;
+                                }
+                                root.pan-x += ev.delta-x;
+                                root.pan-y += ev.delta-y;
+                            }
+                            accept
+                        }
                     }
                 }
 
@@ -1034,6 +1120,89 @@ export component AppWindow inherits Window {
                 Text { text: root.timing-text; color: Theme.text-faint; font-size: Theme.font-small; vertical-alignment: center; }
                 Text { text: root.has-image ? root.region-count-text + " regions" : ""; color: Theme.text-dim; font-size: Theme.font-small; vertical-alignment: center; }
                 Rectangle { width: 52px; Text { x: 0px; width: parent.width; height: parent.height; horizontal-alignment: right; vertical-alignment: center; text: root.has-image ? round(root.effective-zoom * 100) + "%" : ""; color: Theme.text-dim; font-size: Theme.font-small; } }
+            }
+        }
+    }
+
+    // ================= In-app file browser (mobile) =================
+    if root.picker-visible: Rectangle {
+        background: #000000a8;
+        TouchArea { clicked => { root.picker-visible = false; } }
+        Rectangle {
+            width: min(parent.width - 32px, 680px);
+            height: min(parent.height - 48px, 720px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Theme.panel;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: Theme.border;
+            TouchArea { } // swallow taps so they don't dismiss
+            VerticalLayout {
+                padding: 16px;
+                spacing: 10px;
+                HorizontalLayout {
+                    spacing: 8px;
+                    Text {
+                        text: root.picker-title;
+                        color: Theme.text;
+                        font-size: 18px;
+                        font-weight: 600;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    Button { text: "Refresh"; clicked => { root.picker-refresh(); } }
+                    Button { text: "Cancel"; clicked => { root.picker-visible = false; } }
+                }
+                if root.picker-items.length == 0: Text {
+                    text: root.picker-empty-text;
+                    color: Theme.text-dim;
+                    wrap: word-wrap;
+                    vertical-stretch: 1;
+                }
+                if root.picker-items.length > 0: ListView {
+                    vertical-stretch: 1;
+                    for it[i] in root.picker-items: Rectangle {
+                        height: 56px;
+                        border-radius: 6px;
+                        background: ita.pressed ? Theme.pressed : ita.has-hover ? Theme.hover : transparent;
+                        ita := TouchArea { clicked => { root.picker-chosen(i); } }
+                        VerticalLayout {
+                            padding-left: 12px;
+                            padding-right: 12px;
+                            alignment: center;
+                            Text { text: it.name; color: Theme.text; font-size: 14px; overflow: elide; }
+                            Text { text: it.detail; color: Theme.text-faint; font-size: 11px; overflow: elide; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ================= In-app message sheet (mobile) =================
+    if root.alert-visible: Rectangle {
+        background: #000000a8;
+        TouchArea { clicked => { root.alert-visible = false; } }
+        Rectangle {
+            width: min(parent.width - 32px, 520px);
+            height: min(parent.height - 48px, alert-layout.preferred-height);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Theme.panel;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: Theme.border;
+            TouchArea { }
+            alert-layout := VerticalLayout {
+                padding: 18px;
+                spacing: 12px;
+                Text { text: root.alert-title; color: Theme.text; font-size: 17px; font-weight: 600; }
+                Text { text: root.alert-text; color: Theme.text-dim; wrap: word-wrap; }
+                HorizontalLayout {
+                    alignment: end;
+                    Button { text: "OK"; primary: true; clicked => { root.alert-visible = false; } }
+                }
             }
         }
     }

@@ -19,6 +19,16 @@ These builds are ad-hoc signed and **not notarized**. The first time you open th
 xattr -dr com.apple.quarantine /Applications/StencilStudio.app
 ```
 
+### Android (preview)
+
+StencilStudio also runs on Android tablets and foldables (Android 10+, arm64). It has the same ribbon UI with touch on top: two-finger pinch to zoom, drag to pan, and keyboard shortcuts when a keyboard is attached. It has been tested on a Galaxy Z Fold and a Pixel Tablet emulator. Differences from desktop:
+
+- **Open Image** shows an in-app browser of photos in Pictures, DCIM, Download and Documents. Android asks for photo access the first time.
+- Exports and calibration PDFs are saved to **Documents/StencilStudio**, where you can open them in the Files app (and print from there).
+- The desktop menu bar is hidden; everything is in the ribbon. On narrow screens, use the ‹ › buttons to scroll the ribbon.
+
+To build: `scripts/build-android.sh --install <adb-serial>`. This needs the Android SDK with **NDK 30+** and **build-tools 37+**, plus `cargo install cargo-apk2` and `rustup target add aarch64-linux-android`. The APK is signed with your local debug key for sideloading.
+
 ## How it works
 
 1. **Open an image.** Use JPG, PNG or WebP (`Ctrl+O`, or drop a path on the command line).
@@ -125,6 +135,7 @@ cargo run -p stencil-studio                     # run the app
 cargo run -p stencil-studio -- photo.jpg        # open an image directly
 cargo test --workspace                          # run the tests
 scripts/package-macos.sh                        # universal .app + zip in dist/
+scripts/build-android.sh --install <serial>     # Android APK in dist/ (+ install)
 ```
 
 Developer tools:
@@ -139,7 +150,7 @@ cargo run -p stencil-core --example calibration_sheet -- sheet.pdf [letter]
 | Crate | Purpose |
 |---|---|
 | `crates/stencil-core` | UI-free engine: color science, palette selection, segmentation, smooth vectorization, stencil sheets & bridges, SVG/DXF/STL writers, PDF calibration sheets. |
-| `crates/stencil-studio` | The Slint app. UI in `ui/*.slint`; live processing on a background thread; exports run at higher resolution on their own thread. |
+| `crates/stencil-studio` | The Slint app (desktop binary + Android `cdylib`). UI in `ui/*.slint`; platform differences (file dialogs, saving, printing) in `src/platform.rs`; live processing on a background thread; exports run at higher resolution on their own thread. |
 
 <details>
 <summary>How the engine works</summary>
@@ -160,6 +171,7 @@ cargo run -p stencil-core --example calibration_sheet -- sheet.pdf [letter]
 - **0.1.1:** bridges for floating pieces (size-aware drop/bridge), manual color chart + chart codes, README walkthrough.
 - **0.1.2:** *Focus on subject* color selection; STL robustness fixes found on high-res photos; new screenshots.
 - **Next:** manual bridge editing (click to add/remove), on-canvas layer preview, kerf offset, paint-by-numbers numbers + PDF packet, scan-sheet import (with an eyeball-check step), color wheel, crop/contrast/background removal, project files.
-- **Later:** 3MF, paint-mixing suggestions, Windows/Linux packages, Android tablet & iPad builds.
+- **Android preview:** same app on tablets/foldables; in-app image browser, pinch-zoom, touch-friendly ribbon.
+- **Later:** Android system photo picker & share/print intents, 3MF, paint-mixing suggestions, Windows/Linux packages, iPad build.
 
 *Screenshots use royalty-free stock photos, for demonstration only. They are not included in the repository. `docs/sample/balloon.jpg` is an original illustration made for this project that you can use for testing.*
