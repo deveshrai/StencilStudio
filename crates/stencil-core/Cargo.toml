@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 earcut = "0.4"
+i_overlay = "9.2.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 rayon = "1.12.0"
 serde = { version = "1.0.229", features = ["derive"] }

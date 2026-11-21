@@ -59,11 +59,12 @@ fn main() {
         std::fs::write(out.join(format!("{base}.dxf")), export::layer_dxf(l, &opts)).unwrap();
         std::fs::write(out.join(format!("{base}.stl")), export::layer_stl(l, &opts)).unwrap();
         println!(
-            "  layer {} {:<16} islands {:>3}  holes {:>3}",
+            "  layer {} {:<16} bridged {:>3} dropped {:>3} left {}",
             l.number,
             l.name,
-            l.island_count(),
-            l.pieces[0].holes.len()
+            l.bridged,
+            l.dropped,
+            l.island_count()
         );
     }
 }

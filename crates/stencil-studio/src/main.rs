@@ -110,6 +110,7 @@ fn show_swatches(ui: &AppWindow, palette: &Palette, selected: &[usize], usage: &
                 color: rgb_to_slint(s.color),
                 name: s.name.as_str().into(),
                 hex: s.color.to_hex().into(),
+                chart: stencil_core::chart::nearest_code(s.color).into(),
                 active: selected.contains(&i) && used > 0,
                 usage: if used > 0 && total > 0 {
                     format!("{:.0}%", used as f64 * 100.0 / total as f64).into()
@@ -268,8 +269,31 @@ fn edit_palette(ui: &AppWindow, f: impl FnOnce(&mut Palette)) {
     request_processing(ui);
 }
 
-/// Paper for the calibration sheet: US Letter if the user works in US sizes, else A4.
-fn calibration_pdf(ui: &AppWindow) -> Vec<u8> {
+#[derive(Clone, Copy)]
+enum CalibrationDoc {
+    /// Printed fan-deck chart, matched by eye (never scanned).
+    ColorChart,
+    /// Fill-in sheet that is photographed/scanned and imported.
+    ScanSheet,
+}
+
+impl CalibrationDoc {
+    fn file_name(self) -> &'static str {
+        match self {
+            Self::ColorChart => "manual-color-chart.pdf",
+            Self::ScanSheet => "palette-scan-sheet.pdf",
+        }
+    }
+    fn title(self) -> &'static str {
+        match self {
+            Self::ColorChart => "manual color chart",
+            Self::ScanSheet => "scan sheet",
+        }
+    }
+}
+
+/// Render a calibration document: US Letter if the user works in US sizes, else A4.
+fn calibration_pdf(ui: &AppWindow, doc: CalibrationDoc) -> Vec<u8> {
     let us = with_state(|st| {
         st.papers
             .get(ui.get_paper_index().max(0) as usize)
@@ -287,7 +311,47 @@ fn calibration_pdf(ui: &AppWindow) -> Vec<u8> {
         ),
         None => (String::new(), Vec::new()),
     });
-    stencil_core::calibration::sheet_pdf(&paper, &name, &names)
+    match doc {
+        CalibrationDoc::ColorChart => stencil_core::chart::chart_pdf(&paper, &name, &names),
+        CalibrationDoc::ScanSheet => stencil_core::calibration::sheet_pdf(&paper, &name, &names),
+    }
+}
+
+fn save_calibration(ui: &AppWindow, doc: CalibrationDoc) {
+    let Some(path) = rfd::FileDialog::new()
+        .set_title(format!("Save {}", doc.title()))
+        .add_filter("PDF", &["pdf"])
+        .set_file_name(doc.file_name())
+        .save_file()
+    else {
+        return;
+    };
+    match std::fs::write(&path, calibration_pdf(ui, doc)) {
+        Ok(()) => ui.set_status_text(format!("Saved {} to {}", doc.title(), path.display()).into()),
+        Err(e) => ui.set_status_text(format!("Could not save {}: {e}", doc.title()).into()),
+    }
+}
+
+fn print_calibration(ui: &AppWindow, doc: CalibrationDoc) {
+    let path = std::env::temp_dir().join(format!("StencilStudio-{}", doc.file_name()));
+    if let Err(e) = std::fs::write(&path, calibration_pdf(ui, doc)) {
+        ui.set_status_text(format!("Could not prepare the {}: {e}", doc.title()).into());
+        return;
+    }
+    ui.set_status_text("Opening the print dialog…".into());
+    // The OS print flow can block; keep the UI responsive.
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let msg = match print::print_pdf(&path) {
+            Ok(()) => format!("Sent the {} to the print dialog", doc.title()),
+            Err(e) => format!("Could not print: {e}"),
+        };
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_status_text(msg.into());
+            }
+        });
+    });
 }
 
 fn start_export(ui: &AppWindow, format: export_job::Format) {
@@ -321,6 +385,9 @@ fn start_export(ui: &AppWindow, format: export_job::Format) {
         thickness_mm: thickness,
         frame_mm: ui.get_frame_width(),
         registration_marks: ui.get_registration_marks(),
+        bridge_islands: ui.get_bridge_islands(),
+        bridge_width_mm: ui.get_bridge_width(),
+        min_island_mm2: ui.get_min_island(),
         ..Default::default()
     };
     let job = export_job::ExportJob {
@@ -356,11 +423,17 @@ fn start_export(ui: &AppWindow, format: export_job::Format) {
                         format.label(),
                         elapsed.as_secs_f32()
                     );
+                    if summary.bridged + summary.dropped > 0 {
+                        msg += &format!(
+                            "  ·  {} floating piece(s) bridged, {} too small and dropped",
+                            summary.bridged, summary.dropped
+                        );
+                    }
                     if !summary.islands.is_empty() {
                         let total: usize = summary.islands.iter().map(|i| i.2).sum();
                         let worst = summary.islands.iter().max_by_key(|i| i.2).unwrap();
                         msg += &format!(
-                            "  ·  ⚠ {total} floating piece(s) will fall out (most in layer {} {}); bridges are coming next",
+                            "  ·  ⚠ {total} floating piece(s) will fall out (most in layer {} {}); turn on bridging",
                             worst.0, worst.1
                         );
                     }
@@ -384,7 +457,7 @@ Ctrl+O\tOpen image
 Ctrl+Shift+O\tLoad palette
 Ctrl+Shift+S\tSave palette
 Ctrl+E\tExport stencil layers (SVG)
-Ctrl+P\tPrint calibration sheet
+Ctrl+P\tPrint manual color chart
 Ctrl+1 / 2 / 3 / 4\tOriginal / Preview / Outlines / Split
 Ctrl+= / Ctrl+-\tZoom in / out (or Ctrl+scroll)
 Ctrl+0\tFit to window
@@ -569,44 +642,36 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
     let w = ui.as_weak();
-    ui.on_save_calibration_sheet(move || {
-        let ui = w.unwrap();
-        let Some(path) = rfd::FileDialog::new()
-            .set_title("Save Calibration Sheet")
-            .add_filter("PDF", &["pdf"])
-            .set_file_name("palette-calibration-sheet.pdf")
-            .save_file()
-        else {
-            return;
-        };
-        match std::fs::write(&path, calibration_pdf(&ui)) {
-            Ok(()) => ui.set_status_text(format!("Saved calibration sheet to {}", path.display()).into()),
-            Err(e) => ui.set_status_text(format!("Could not save calibration sheet: {e}").into()),
-        }
-    });
+    ui.on_save_calibration_sheet(move || save_calibration(&w.unwrap(), CalibrationDoc::ScanSheet));
+    let w = ui.as_weak();
+    ui.on_print_calibration_sheet(move || print_calibration(&w.unwrap(), CalibrationDoc::ScanSheet));
+    let w = ui.as_weak();
+    ui.on_save_color_chart(move || save_calibration(&w.unwrap(), CalibrationDoc::ColorChart));
+    let w = ui.as_weak();
+    ui.on_print_color_chart(move || print_calibration(&w.unwrap(), CalibrationDoc::ColorChart));
 
     let w = ui.as_weak();
-    ui.on_print_calibration_sheet(move || {
+    ui.on_swatch_chart_code(move |i, code| {
         let ui = w.unwrap();
-        let path = std::env::temp_dir().join("StencilStudio-calibration-sheet.pdf");
-        if let Err(e) = std::fs::write(&path, calibration_pdf(&ui)) {
-            ui.set_status_text(format!("Could not prepare calibration sheet: {e}").into());
+        let Some(color) = stencil_core::chart::lookup(&code) else {
+            ui.set_status_text(format!("“{code}” is not on the color chart (columns A–P, rows 1–13, e.g. D7)").into());
             return;
-        }
-        ui.set_status_text("Opening the print dialog…".into());
-        // The OS print flow can block; keep the UI responsive.
-        let weak = ui.as_weak();
-        std::thread::spawn(move || {
-            let msg = match print::print_pdf(&path) {
-                Ok(()) => "Calibration sheet sent to the print dialog".to_string(),
-                Err(e) => format!("Could not print: {e}"),
-            };
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(ui) = weak.upgrade() {
-                    ui.set_status_text(msg.into());
-                }
-            });
+        };
+        let mut name = String::new();
+        edit_palette(&ui, |p| {
+            if let Some(s) = p.swatches.get_mut(i as usize) {
+                s.color = color;
+                name = s.name.clone();
+            }
         });
+        ui.set_status_text(
+            format!(
+                "{name} set to chart patch {} ({})",
+                code.trim().to_uppercase(),
+                color.to_hex()
+            )
+            .into(),
+        );
     });
 
     let w = ui.as_weak();

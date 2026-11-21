@@ -108,14 +108,32 @@ impl Lab {
         }
     }
 
-    pub fn to_rgb(self) -> Rgb8 {
+    /// Linear-light sRGB components, not clamped (values outside 0..1 are out of gamut).
+    pub fn to_linear_rgb(self) -> [f32; 3] {
         let fy = (self.l + 16.0) / 116.0;
         let fx = fy + self.a / 500.0;
         let fz = fy - self.b / 200.0;
         let (x, y, z) = (f_lab_inv(fx) * XN, f_lab_inv(fy) * YN, f_lab_inv(fz) * ZN);
-        let r = 3.240_454_2 * x - 1.537_138_5 * y - 0.498_531_4 * z;
-        let g = -0.969_266 * x + 1.876_010_8 * y + 0.041_556 * z;
-        let b = 0.055_643_4 * x - 0.204_025_9 * y + 1.057_225_2 * z;
+        [
+            3.240_454_2 * x - 1.537_138_5 * y - 0.498_531_4 * z,
+            -0.969_266 * x + 1.876_010_8 * y + 0.041_556 * z,
+            0.055_643_4 * x - 0.204_025_9 * y + 1.057_225_2 * z,
+        ]
+    }
+
+    /// True if this color can be shown/printed as sRGB without clipping.
+    pub fn in_srgb_gamut(self) -> bool {
+        self.to_linear_rgb().iter().all(|&c| (-1e-4..=1.0001).contains(&c))
+    }
+
+    /// Build from lightness, chroma and hue angle (degrees).
+    pub fn from_lch(l: f32, c: f32, h_deg: f32) -> Self {
+        let h = h_deg.to_radians();
+        Lab::new(l, c * h.cos(), c * h.sin())
+    }
+
+    pub fn to_rgb(self) -> Rgb8 {
+        let [r, g, b] = self.to_linear_rgb();
         Rgb8::new(linear_to_srgb(r), linear_to_srgb(g), linear_to_srgb(b))
     }
 

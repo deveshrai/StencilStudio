@@ -299,6 +299,8 @@ mod tests {
             name: "Red & Co".into(),
             color: Rgb8::new(200, 0, 0),
             sheet_mm: (100.0, 80.0),
+            bridged: 0,
+            dropped: 0,
             pieces: vec![SolidPolygon {
                 outer: vec![[0.0, 0.0], [100.0, 0.0], [100.0, 80.0], [0.0, 80.0]],
                 holes: vec![vec![[30.0, 30.0], [30.0, 50.0], [60.0, 50.0], [60.0, 30.0]]],

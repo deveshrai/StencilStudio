@@ -2,11 +2,11 @@
 //! registration holes, and cut-outs where that color is painted.
 
 use crate::color::Rgb8;
+use crate::islands::{IslandRules, resolve_islands};
 use crate::palette::Palette;
 use crate::regions::Segmentation;
 use crate::vector::{Pt, SmoothBoundaries, simplify_closed, trace_mask};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StencilOptions {
@@ -20,6 +20,13 @@ pub struct StencilOptions {
     pub mark_size_mm: f32,
     /// Max deviation allowed when simplifying curves (mm).
     pub tolerance_mm: f32,
+    /// Connect floating pieces to the sheet with two thin bridges.
+    pub bridge_islands: bool,
+    /// Width of each bridge (mm).
+    pub bridge_width_mm: f32,
+    /// Floating pieces smaller than this (mm²) are dropped instead of bridged. Mid-size
+    /// pieces whose bridges would be far longer than the piece are dropped too.
+    pub min_island_mm2: f32,
 }
 
 impl Default for StencilOptions {
@@ -30,6 +37,9 @@ impl Default for StencilOptions {
             registration_marks: true,
             mark_size_mm: 4.0,
             tolerance_mm: 0.02,
+            bridge_islands: true,
+            bridge_width_mm: 1.2,
+            min_island_mm2: 6.0,
         }
     }
 }
@@ -54,6 +64,10 @@ pub struct StencilLayer {
     /// Solid material. `pieces[0]` is the main sheet; any further pieces are
     /// floating islands that would fall out unless bridged.
     pub pieces: Vec<SolidPolygon>,
+    /// Floating pieces that were connected with bridges.
+    pub bridged: usize,
+    /// Floating pieces that were too small and were dropped.
+    pub dropped: usize,
 }
 
 impl StencilLayer {
@@ -119,56 +133,45 @@ fn build_layer(
     px_per_mm: f32,
     opts: &StencilOptions,
 ) -> StencilLayer {
+    use i_overlay::core::fill_rule::FillRule;
+    use i_overlay::core::overlay_rule::OverlayRule;
+    use i_overlay::float::single::SingleFloatOverlay;
+
     let (w, h) = (seg.width, seg.height);
     let f = (opts.frame_mm * px_per_mm).round().max(0.0) as u32;
     let (pw, ph) = (w + 2 * f, h + 2 * f);
+    let idx = |x: u32, y: u32| (y * pw + x) as usize;
 
-    let solid = |x: u32, y: u32| -> bool {
-        if x < f || y < f || x >= f + w || y >= f + h {
-            true
-        } else {
-            seg.region_color[seg.labels[((y - f) * w + (x - f)) as usize] as usize] != color
+    // Solid material: the frame, plus every pixel that is *not* this layer's color.
+    let mut solid = vec![true; (pw * ph) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            solid[idx(x + f, y + f)] = seg.region_color[seg.labels[(y * w + x) as usize] as usize] != color;
         }
-    };
+    }
 
-    let loops = trace_mask(pw, ph, solid);
-
-    // Connected components of solid pixels (4-connected) to group holes with outlines.
-    let mut comp = vec![u32::MAX; (pw * ph) as usize];
-    let mut stack = Vec::new();
-    let mut ncomp = 0u32;
-    let comp_of = |comp: &mut Vec<u32>, stack: &mut Vec<u32>, ncomp: &mut u32, sx: u32, sy: u32| -> u32 {
-        let si = (sy * pw + sx) as usize;
-        if comp[si] != u32::MAX {
-            return comp[si];
+    // Decide bridges / drops on a scratch copy (painting bridges keeps connectivity right
+    // across passes), then remove dropped pieces from the real mask.
+    let mut bridges: Vec<[u32; 4]> = Vec::new();
+    let (bridged, dropped) = if opts.bridge_islands {
+        let mut scratch = solid.clone();
+        let bridge_px = (opts.bridge_width_mm * px_per_mm).round() as u32;
+        let min_px = (opts.min_island_mm2 * px_per_mm * px_per_mm).round() as u64;
+        // Pieces of 100 mm² or more are always worth keeping.
+        let always_px = (100.0 * px_per_mm * px_per_mm).round() as u64;
+        let rules = IslandRules {
+            has_frame: f > 0,
+            bridge_px,
+            min_px,
+            always_bridge_px: always_px,
+        };
+        let r = resolve_islands(&mut scratch, pw, ph, &rules, &mut bridges);
+        for (s, &k) in solid.iter_mut().zip(&scratch) {
+            *s &= k; // bridging only adds material; anything removed was dropped
         }
-        let id = *ncomp;
-        *ncomp += 1;
-        comp[si] = id;
-        stack.push(si as u32);
-        while let Some(i) = stack.pop() {
-            let (x, y) = (i % pw, i / pw);
-            let mut visit = |nx: u32, ny: u32| {
-                let j = (ny * pw + nx) as usize;
-                if comp[j] == u32::MAX && solid(nx, ny) {
-                    comp[j] = id;
-                    stack.push(j as u32);
-                }
-            };
-            if x > 0 {
-                visit(x - 1, y);
-            }
-            if x + 1 < pw {
-                visit(x + 1, y);
-            }
-            if y > 0 {
-                visit(x, y - 1);
-            }
-            if y + 1 < ph {
-                visit(x, y + 1);
-            }
-        }
-        id
+        r
+    } else {
+        (0, 0)
     };
 
     let to_mm = |cx: u32, cy: u32| -> Pt {
@@ -181,29 +184,35 @@ fn build_layer(
         [p[0] / px_per_mm, p[1] / px_per_mm]
     };
 
-    // component id -> (outer outline, holes)
-    type Group = (Option<Vec<Pt>>, Vec<Vec<Pt>>);
-    let mut groups: HashMap<u32, Group> = HashMap::new();
-    let mut order = Vec::new();
-    for l in &loops {
-        let id = comp_of(&mut comp, &mut stack, &mut ncomp, l.inside_pixel.0, l.inside_pixel.1);
-        let pts: Vec<Pt> = l.corners.iter().map(|&(x, y)| to_mm(x, y)).collect();
-        let pts = simplify_closed(&pts, opts.tolerance_mm);
-        let g = groups.entry(id).or_insert_with(|| {
-            order.push(id);
-            (None, Vec::new())
-        });
-        if l.outer {
-            g.0 = Some(pts);
-        } else {
-            g.1.push(pts);
-        }
-    }
-    let mut pieces: Vec<SolidPolygon> = order
-        .into_iter()
-        .filter_map(|id| {
-            let (outer, holes) = groups.remove(&id)?;
-            Some(SolidPolygon { outer: outer?, holes })
+    // Smooth outlines of the material, as one even-odd subject.
+    let subject: Vec<Vec<[f64; 2]>> = trace_mask(pw, ph, |x, y| solid[idx(x, y)])
+        .iter()
+        .map(|l| {
+            let pts: Vec<Pt> = l.corners.iter().map(|&(x, y)| to_mm(x, y)).collect();
+            simplify_closed(&pts, opts.tolerance_mm)
+                .iter()
+                .map(|p| [p[0] as f64, p[1] as f64])
+                .collect()
+        })
+        .collect();
+    let s = 1.0 / px_per_mm as f64;
+    let clip: Vec<Vec<[f64; 2]>> = bridges
+        .iter()
+        .map(|&[x0, y0, x1, y1]| {
+            let (x0, y0, x1, y1) = (x0 as f64 * s, y0 as f64 * s, x1 as f64 * s, y1 as f64 * s);
+            vec![[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
+        })
+        .collect();
+
+    // Robust union: merges bridges and resolves any self-intersections left by smoothing.
+    let shapes = subject.overlay(&clip, OverlayRule::Union, FillRule::EvenOdd);
+    let ring = |c: &Vec<[f64; 2]>| -> Vec<Pt> { c.iter().map(|p| [p[0] as f32, p[1] as f32]).collect() };
+    let mut pieces: Vec<SolidPolygon> = shapes
+        .iter()
+        .filter(|sh| !sh.is_empty())
+        .map(|sh| SolidPolygon {
+            outer: ring(&sh[0]),
+            holes: sh[1..].iter().map(ring).collect(),
         })
         .collect();
     // Main sheet first (largest outline).
@@ -242,6 +251,8 @@ fn build_layer(
         color: Rgb8::BLACK,
         sheet_mm,
         pieces,
+        bridged,
+        dropped,
     }
 }
 
@@ -267,7 +278,11 @@ mod tests {
             name: "t".into(),
             swatches: vec![Swatch::new("White", Rgb8::WHITE), Swatch::new("Black", Rgb8::BLACK)],
         };
-        let layers = build_layers(&seg, &sb, &pal, 2.0, &StencilOptions::default());
+        let no_bridges = StencilOptions {
+            bridge_islands: false,
+            ..Default::default()
+        };
+        let layers = build_layers(&seg, &sb, &pal, 2.0, &no_bridges);
         assert_eq!(layers.len(), 2);
         let black = layers.iter().find(|l| l.name == "Black").unwrap();
         assert_eq!(black.number, 2); // white is painted first
@@ -275,5 +290,22 @@ mod tests {
         // main sheet: frame outline, 1 ring hole, 4 registration holes
         assert_eq!(black.pieces[0].holes.len(), 5);
         assert!((black.sheet_mm.0 - (30.0 + 24.0)).abs() < 0.6);
+
+        // With bridging the centre is held by two bridges, which split the ring hole in two.
+        let layers = build_layers(&seg, &sb, &pal, 2.0, &StencilOptions::default());
+        let black = layers.iter().find(|l| l.name == "Black").unwrap();
+        assert_eq!(black.island_count(), 0);
+        assert_eq!((black.bridged, black.dropped), (1, 0));
+        assert_eq!(black.pieces[0].holes.len(), 2 + 4);
+
+        // A tiny centre is dropped instead.
+        let tiny = StencilOptions {
+            min_island_mm2: 200.0,
+            ..Default::default()
+        };
+        let layers = build_layers(&seg, &sb, &pal, 2.0, &tiny);
+        let black = layers.iter().find(|l| l.name == "Black").unwrap();
+        assert_eq!((black.island_count(), black.bridged, black.dropped), (0, 0, 1));
+        assert_eq!(black.pieces[0].holes.len(), 1 + 4);
     }
 }

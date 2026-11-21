@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" width="1200" height="900">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f6fb3"/><stop offset="0.55" stop-color="#8cc3e8"/><stop offset="1" stop-color="#f4d9a6"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fff6c8"/><stop offset="0.6" stop-color="#ffd257"/><stop offset="1" stop-color="#f6a623"/>
+    </radialGradient>
+    <linearGradient id="hill1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7aa35a"/><stop offset="1" stop-color="#4c7a3a"/></linearGradient>
+    <linearGradient id="hill2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4f7f3c"/><stop offset="1" stop-color="#2d5226"/></linearGradient>
+    <linearGradient id="hill3" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2e5a2b"/><stop offset="1" stop-color="#173518"/></linearGradient>
+    <linearGradient id="stripeR" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#a5161b"/><stop offset="0.5" stop-color="#e0383a"/><stop offset="1" stop-color="#8c1216"/></linearGradient>
+    <linearGradient id="stripeY" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#d79a12"/><stop offset="0.5" stop-color="#ffd03a"/><stop offset="1" stop-color="#c88a0c"/></linearGradient>
+    <clipPath id="env"><path d="M600 120 C 470 120 400 220 400 330 C 400 440 500 520 560 600 L 640 600 C 700 520 800 440 800 330 C 800 220 730 120 600 120 Z"/></clipPath>
+  </defs>
+  <rect width="1200" height="900" fill="url(#sky)"/>
+  <circle cx="930" cy="250" r="120" fill="url(#sun)"/>
+  <circle cx="930" cy="250" r="150" fill="none" stroke="#ffe39a" stroke-width="10" opacity="0.7"/>
+  <g fill="#ffffff" opacity="0.92">
+    <ellipse cx="200" cy="200" rx="110" ry="36"/><ellipse cx="260" cy="178" rx="70" ry="40"/><ellipse cx="150" cy="185" rx="55" ry="30"/>
+    <ellipse cx="1030" cy="470" rx="95" ry="26"/><ellipse cx="1080" cy="452" rx="55" ry="30"/>
+  </g>
+  <path d="M0 640 C 180 560 330 590 470 620 C 640 655 760 560 930 575 C 1050 585 1130 620 1200 610 L1200 900 L0 900 Z" fill="url(#hill1)"/>
+  <path d="M0 720 C 160 660 300 700 430 720 C 600 745 720 670 880 690 C 1010 705 1110 740 1200 730 L1200 900 L0 900 Z" fill="url(#hill2)"/>
+  <path d="M0 800 C 200 760 360 800 520 805 C 700 810 820 770 1000 780 C 1100 785 1160 800 1200 800 L1200 900 L0 900 Z" fill="url(#hill3)"/>
+  <!-- balloon -->
+  <g clip-path="url(#env)">
+    <rect x="380" y="100" width="460" height="520" fill="url(#stripeR)"/>
+    <rect x="470" y="100" width="70" height="520" fill="url(#stripeY)"/>
+    <rect x="660" y="100" width="70" height="520" fill="url(#stripeY)"/>
+    <rect x="565" y="100" width="70" height="520" fill="#f5efe2"/>
+  </g>
+  <path d="M600 120 C 470 120 400 220 400 330 C 400 440 500 520 560 600 L 640 600 C 700 520 800 440 800 330 C 800 220 730 120 600 120 Z" fill="none" stroke="#5a1012" stroke-width="5"/>
+  <g stroke="#4a3320" stroke-width="4"><line x1="565" y1="600" x2="575" y2="660"/><line x1="635" y1="600" x2="625" y2="660"/></g>
+  <rect x="568" y="655" width="64" height="48" rx="6" fill="#8a5a2b" stroke="#4a3320" stroke-width="4"/>
+  <circle cx="600" cy="330" r="34" fill="#f5efe2" stroke="#5a1012" stroke-width="5"/>
+  <circle cx="600" cy="330" r="14" fill="#a5161b"/>
+  <!-- birds -->
+  <g fill="none" stroke="#1d2a3a" stroke-width="6" stroke-linecap="round">
+    <path d="M200 420 q 20 -20 40 0 q 20 -20 40 0"/><path d="M290 470 q 15 -15 30 0 q 15 -15 30 0"/><path d="M880 120 q 15 -15 30 0 q 15 -15 30 0"/>
+  </g>
+</svg>

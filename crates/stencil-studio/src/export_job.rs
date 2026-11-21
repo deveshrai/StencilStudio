@@ -54,8 +54,10 @@ pub struct ExportJob {
 
 pub struct ExportSummary {
     pub files: Vec<PathBuf>,
-    /// (layer number, color name, floating pieces)
+    /// Floating pieces left unconnected: (layer number, color name, count)
     pub islands: Vec<(usize, String, usize)>,
+    pub bridged: usize,
+    pub dropped: usize,
 }
 
 fn slug(s: &str) -> String {
@@ -87,6 +89,8 @@ pub fn run(job: ExportJob) -> Result<ExportSummary, String> {
     let mut summary = ExportSummary {
         files: Vec::new(),
         islands: Vec::new(),
+        bridged: 0,
+        dropped: 0,
     };
     for layer in &layers {
         let path = layer_path(&job.target, layer.number, &layer.name, job.format.ext());
@@ -97,6 +101,8 @@ pub fn run(job: ExportJob) -> Result<ExportSummary, String> {
         };
         std::fs::write(&path, bytes).map_err(|e| format!("{}: {e}", path.display()))?;
         summary.files.push(path);
+        summary.bridged += layer.bridged;
+        summary.dropped += layer.dropped;
         if layer.island_count() > 0 {
             summary
                 .islands
@@ -150,12 +156,10 @@ mod tests {
             let summary = run(job).unwrap();
             assert_eq!(summary.files.len(), 3, "{format:?}");
             assert!(summary.files.iter().all(|f| f.metadata().unwrap().len() > 200));
-            // the red ring's white centre floats free in the red layer
-            assert!(
-                summary.islands.iter().any(|i| i.1 == "Cadmium Red" && i.2 == 1),
-                "{:?}",
-                summary.islands
-            );
+            // Red layer: the white centre would float. Black layer: the whole disc would
+            // float inside the black cut. Both are bridged instead.
+            assert!(summary.islands.is_empty(), "{:?}", summary.islands);
+            assert_eq!((summary.bridged, summary.dropped), (2, 0));
         }
         std::fs::remove_dir_all(&dir).ok();
     }

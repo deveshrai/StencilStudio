@@ -4,8 +4,10 @@
 //! This crate is UI-agnostic and must stay free of any windowing/GUI dependencies.
 
 pub mod calibration;
+pub mod chart;
 pub mod color;
 pub mod export;
+mod islands;
 pub mod palette;
 pub mod paper;
 pub mod pdf;

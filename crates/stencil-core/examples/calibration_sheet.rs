@@ -11,4 +11,6 @@ fn main() {
     let p = Palette::basic_acrylic_12();
     let names: Vec<String> = p.swatches.iter().map(|s| s.name.clone()).collect();
     std::fs::write(&out, calibration::sheet_pdf(&paper, &p.name, &names)).unwrap();
+    let chart_out = out.replace(".pdf", "-chart.pdf");
+    std::fs::write(&chart_out, stencil_core::chart::chart_pdf(&paper, &p.name, &names)).unwrap();
 }

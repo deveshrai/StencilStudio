@@ -127,6 +127,7 @@ pub fn sheet_pdf(paper: &PaperSize, palette_name: &str, names: &[String]) -> Vec
         "1. Fill each box completely with one of your paints, pens or pencils, and write its name on the line.",
         "2. Let it dry, then photograph the whole sheet flat in even daylight (or scan it).",
         "3. Keep all four black corner markers and the gray strip visible. Import via Palette > Import Scan.",
+        "Tip: before importing, check a few colors by eye against the Manual Color Chart - it catches lighting errors.",
     ];
     for (i, s) in lines.iter().enumerate() {
         p.fill_rgb(60, 60, 60)

@@ -10,6 +10,7 @@ export struct SwatchItem {
     hex: string,
     active: bool,
     usage: string,
+    chart: string, // nearest manual-chart code
 }
 
 component PanelHeader inherits Rectangle {
@@ -88,6 +89,9 @@ export component AppWindow inherits Window {
     in property <[string]> thickness-names: ["0.6 mm", "0.8 mm", "1.0 mm", "1.2 mm", "1.5 mm", "2.0 mm", "2.5 mm", "3.0 mm"];
     in-out property <float> frame-width: 12; // mm
     in-out property <bool> registration-marks: true;
+    in-out property <bool> bridge-islands: true;
+    in-out property <float> bridge-width: 1.2; // mm
+    in-out property <float> min-island: 6; // mm²
     in property <bool> exporting;
     out property <bool> effective-smooth: root.mode == 0 || root.smooth-outlines;
 
@@ -126,6 +130,9 @@ export component AppWindow inherits Window {
     callback export-layers(string); // "svg" | "dxf" | "stl"
     callback save-calibration-sheet();
     callback print-calibration-sheet();
+    callback save-color-chart();
+    callback print-color-chart();
+    callback swatch-chart-code(int, string);
 
     function set-mode(m: int) {
         root.mode = m;
@@ -190,8 +197,15 @@ export component AppWindow inherits Window {
                 MenuItem { title: "Paint-by-Numbers PDF Packet…"; enabled: false; }
             }
             MenuSeparator { }
-            MenuItem { title: "Save Calibration Sheet PDF…"; activated => { root.save-calibration-sheet(); } }
-            MenuItem { title: "Print Calibration Sheet…"; shortcut: @keys(Control + P); activated => { root.print-calibration-sheet(); } }
+            Menu {
+                title: "Calibration";
+                MenuItem { title: "Print Manual Color Chart…"; shortcut: @keys(Control + P); activated => { root.print-color-chart(); } }
+                MenuItem { title: "Save Manual Color Chart PDF…"; activated => { root.save-color-chart(); } }
+                MenuSeparator { }
+                MenuItem { title: "Print Scan Sheet…"; activated => { root.print-calibration-sheet(); } }
+                MenuItem { title: "Save Scan Sheet PDF…"; activated => { root.save-calibration-sheet(); } }
+                MenuItem { title: "Import Filled Scan Sheet…"; enabled: false; }
+            }
             MenuSeparator { }
             MenuItem { title: "Quit StencilStudio"; role: MenuItemRole.quit; shortcut: @keys(Control + Q); activated => { root.quit-app(); } }
         }
@@ -455,9 +469,11 @@ export component AppWindow inherits Window {
                 }
                 RibbonGroup {
                     title: "Calibration Sheet";
-                    RibbonButton { icon: @image-url("icons/print.svg"); text: "Print Sheet"; tooltip: "Print the palette calibration sheet (Ctrl+P)"; clicked => { root.print-calibration-sheet(); } }
-                    RibbonButton { icon: @image-url("icons/pdf.svg"); text: "Save PDF"; tooltip: "Save the calibration sheet as a PDF"; clicked => { root.save-calibration-sheet(); } }
-                    RibbonButton { icon: @image-url("icons/scan.svg"); text: "Import Scan"; enabled: false; tooltip: "Read colors from a photo/scan of the filled sheet (coming soon)"; }
+                    RibbonButton { icon: @image-url("icons/palette.svg"); text: "Color Chart"; tooltip: "Print the manual color chart: match your paints by eye, then type the patch code (Ctrl+P)"; clicked => { root.print-color-chart(); } }
+                    RibbonButton { icon: @image-url("icons/pdf.svg"); text: "Chart PDF"; tooltip: "Save the manual color chart as a PDF"; clicked => { root.save-color-chart(); } }
+                    RibbonButton { icon: @image-url("icons/print.svg"); text: "Scan Sheet"; tooltip: "Print the scan sheet (fill in, photograph, import)"; clicked => { root.print-calibration-sheet(); } }
+                    RibbonButton { icon: @image-url("icons/pdf.svg"); text: "Scan PDF"; tooltip: "Save the scan sheet as a PDF"; clicked => { root.save-calibration-sheet(); } }
+                    RibbonButton { icon: @image-url("icons/scan.svg"); text: "Import Scan"; enabled: false; tooltip: "Read colors from a photo/scan of the filled sheet (coming soon). Do one eyeball check with the Color Chart first."; }
                 }
             }
 
@@ -520,6 +536,43 @@ export component AppWindow inherits Window {
                     }
                 }
                 RibbonGroup {
+                    title: "Floating Pieces";
+                    VerticalLayout {
+                        width: 190px;
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        alignment: center;
+                        spacing: 2px;
+                        CheckBox { text: "Bridge floating pieces"; checked <=> root.bridge-islands; }
+                        LabeledSlider {
+                            label: "Bridge width";
+                            value-text: round(root.bridge-width * 10) / 10 + " mm";
+                            minimum: 0.6;
+                            maximum: 3;
+                            step: 0.1;
+                            enabled: root.bridge-islands;
+                            value: root.bridge-width;
+                            changed(v) => { root.bridge-width = v; }
+                        }
+                    }
+                    VerticalLayout {
+                        width: 170px;
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        alignment: center;
+                        LabeledSlider {
+                            label: "Drop pieces under";
+                            value-text: round(root.min-island) + " mm²";
+                            minimum: 0;
+                            maximum: 60;
+                            step: 1;
+                            enabled: root.bridge-islands;
+                            value: root.min-island;
+                            changed(v) => { root.min-island = round(v); }
+                        }
+                    }
+                }
+                RibbonGroup {
                     title: "Laser / Cutter";
                     RibbonButton { icon: @image-url("icons/vector.svg"); text: "SVG"; enabled: root.has-image && !root.exporting; tooltip: "One SVG per layer: red hairline cuts, blue engraved label (Ctrl+E)"; clicked => { root.export-layers("svg"); } }
                     RibbonButton { icon: @image-url("icons/vector.svg"); text: "DXF"; enabled: root.has-image && !root.exporting; tooltip: "One DXF per layer (R12, mm): CUT and ENGRAVE layers"; clicked => { root.export-layers("dxf"); } }
@@ -527,11 +580,6 @@ export component AppWindow inherits Window {
                 RibbonGroup {
                     title: "3D Print";
                     RibbonButton { icon: @image-url("icons/cube.svg"); text: "STL"; enabled: root.has-image && !root.exporting; tooltip: "One watertight STL per layer at the chosen thickness"; clicked => { root.export-layers("stl"); } }
-                }
-                RibbonGroup {
-                    title: "Calibration Sheet";
-                    RibbonButton { icon: @image-url("icons/pdf.svg"); text: "Save PDF"; tooltip: "Save the palette calibration sheet as a PDF"; clicked => { root.save-calibration-sheet(); } }
-                    RibbonButton { icon: @image-url("icons/print.svg"); text: "Print"; tooltip: "Print the palette calibration sheet (Ctrl+P)"; clicked => { root.print-calibration-sheet(); } }
                 }
                 RibbonGroup {
                     title: "Paint by Numbers";
@@ -591,7 +639,7 @@ export component AppWindow inherits Window {
                                     alignment: center;
                                     horizontal-stretch: 1;
                                     Text { text: sw.name; color: sw.active ? Theme.text : Theme.text-dim; overflow: elide; }
-                                    Text { text: sw.hex; color: Theme.text-faint; font-size: 10.5px; }
+                                    Text { text: sw.hex + "  ·  chart " + sw.chart; color: Theme.text-faint; font-size: 10.5px; }
                                 }
                                 Text {
                                     text: sw.usage;
@@ -635,11 +683,23 @@ export component AppWindow inherits Window {
                                         text: root.swatches[root.selected-swatch].name;
                                         accepted(t) => { root.swatch-edited(root.selected-swatch, t, hex-edit.text); }
                                     }
-                                    hex-edit := LineEdit {
-                                        enabled: root.palette-editable;
-                                        placeholder-text: "#RRGGBB";
-                                        text: root.swatches[root.selected-swatch].hex;
-                                        accepted(t) => { root.swatch-edited(root.selected-swatch, name-edit.text, t); }
+                                    HorizontalLayout {
+                                        spacing: 4px;
+                                        hex-edit := LineEdit {
+                                            enabled: root.palette-editable;
+                                            placeholder-text: "#RRGGBB";
+                                            text: root.swatches[root.selected-swatch].hex;
+                                            accepted(t) => { root.swatch-edited(root.selected-swatch, name-edit.text, t); }
+                                        }
+                                        LineEdit {
+                                            width: 72px;
+                                            enabled: root.palette-editable;
+                                            placeholder-text: "Chart " + root.swatches[root.selected-swatch].chart;
+                                            accepted(t) => {
+                                                root.swatch-chart-code(root.selected-swatch, t);
+                                                self.text = "";
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -902,6 +962,27 @@ export component AppWindow inherits Window {
                                 changed(v) => { root.frame-width = round(v); }
                             }
                             if root.mode == 0: CheckBox { text: "Registration holes"; checked <=> root.registration-marks; }
+                            if root.mode == 0: CheckBox { text: "Bridge floating pieces"; checked <=> root.bridge-islands; }
+                            if root.mode == 0: LabeledSlider {
+                                label: "Bridge width";
+                                value-text: round(root.bridge-width * 10) / 10 + " mm";
+                                minimum: 0.6;
+                                maximum: 3;
+                                step: 0.1;
+                                enabled: root.bridge-islands;
+                                value: root.bridge-width;
+                                changed(v) => { root.bridge-width = v; }
+                            }
+                            if root.mode == 0: LabeledSlider {
+                                label: "Drop pieces under";
+                                value-text: round(root.min-island) + " mm²";
+                                minimum: 0;
+                                maximum: 60;
+                                step: 1;
+                                enabled: root.bridge-islands;
+                                value: root.min-island;
+                                changed(v) => { root.min-island = round(v); }
+                            }
 
                             SectionLabel { text: "OUTPUT"; }
                             ComboBox {
