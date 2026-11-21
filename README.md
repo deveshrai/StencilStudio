@@ -76,6 +76,18 @@ The **Outlines** view (`Ctrl+3`) shows exactly where the cuts will be. Outlines 
 
 Every layer gets a **solid frame** (12 mm by default) and **four round registration holes** in the same place on every sheet. Push pins or dowels through them to line the layers up while you paint.
 
+### Layers view: see and edit bridges
+
+![Layers view on a tablet: the black layer with automatic (blue) bridges and one added by hand (green)](docs/screenshots/layers-bridges.png)
+
+**Layers** (`Ctrl+5`, or *Preview → Layers*) shows each stencil sheet exactly as it will be cut. Pick a layer from the chips at the top.
+
+- **What you see:** cut-outs in the layer's paint color on the sheet material. Automatic bridges are **blue**, bridges you added are **green**, and anything still floating is **red**.
+- **Click a bridge** to remove it.
+- **Click inside a cut** to add a bridge across it at that spot. It runs horizontally or vertically, whichever is shorter, to the material on both sides. Clicking works with a finger too.
+- **Undo** with `Ctrl+Z`. **Reset bridges** returns the layer to automatic.
+- **Exports match:** edits are stored in millimetres on the sheet, so SVG, DXF and STL exports contain exactly what you see.
+
 ### Floating pieces and bridges
 
 Some cut-outs leave a piece of sheet with nothing holding it, like the center of an "O" or the pupil of an eye. That piece would fall out. StencilStudio decides how to handle each one by its size:
@@ -121,6 +133,8 @@ The palette list shows each color's nearest chart code, so you can also check ex
 | Ctrl+E | Export stencil layers (SVG) |
 | Ctrl+P | Print manual color chart |
 | Ctrl+1 / 2 / 3 / 4 | Original / Preview / Outlines / Split view |
+| Ctrl+5 | Stencil layers (click to add/remove bridges) |
+| Ctrl+Z | Undo bridge edit |
 | Ctrl+= / Ctrl+- / Ctrl+0 | Zoom in / out / fit (Ctrl+scroll zooms at the cursor; drag to pan) |
 | Ctrl+Alt+0 | Actual pixels |
 | Ctrl+] / Ctrl+[ | More / fewer colors |
@@ -172,7 +186,8 @@ cargo run -p stencil-core --example calibration_sheet -- sheet.pdf [letter]
 - **0.1.0:** engine, app shell, live preview, palettes; smooth vector stencils; SVG/DXF/STL export; scan sheet; macOS build.
 - **0.1.1:** bridges for floating pieces (size-aware drop/bridge), manual color chart + chart codes, README walkthrough.
 - **0.1.2:** *Focus on subject* color selection; STL robustness fixes found on high-res photos; new screenshots.
-- **Next:** manual bridge editing (click to add/remove), on-canvas layer preview, kerf offset, paint-by-numbers numbers + PDF packet, scan-sheet import (with an eyeball-check step), color wheel, crop/contrast/background removal, project files.
+- **0.1.4:** Layers view with click-to-add/remove bridges and undo; new puppy app icon.
+- **Next:** kerf offset, paint-by-numbers numbers + PDF packet, scan-sheet import (with an eyeball-check step), color wheel, crop/contrast/background removal, project files.
 - **Android preview:** same app on tablets/foldables; in-app image browser, pinch-zoom, touch-friendly ribbon.
 - **Later:** Android system photo picker & share/print intents, 3MF, paint-mixing suggestions, Windows/Linux packages, iPad build.
 

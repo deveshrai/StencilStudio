@@ -4,6 +4,11 @@ import { RibbonButton, RibbonGroup, RibbonTab, LabeledSlider } from "ribbon.slin
 
 export { Theme, Hint }
 
+export struct LayerChip {
+    color: color,
+    label: string,
+}
+
 export struct PickerItem {
     name: string,
     detail: string,
@@ -121,8 +126,25 @@ export component AppWindow inherits Window {
     callback picker-chosen(int);
     callback picker-refresh();
 
+    // ---- Stencil layers view (view-mode 4) ----
+    in property <[LayerChip]> layer-chips;
+    in-out property <int> layer-index: 0;
+    in property <image> layer-image;
+    in property <string> layer-info;
+    in property <bool> can-undo;
+    callback layer-selected(int);
+    callback canvas-clicked(float, float);
+    callback stencil-options-changed();
+    callback reset-layer-bridges();
+    callback undo();
+    changed view-mode => {
+        if (self.view-mode == 4) {
+            root.settings-changed();
+        }
+    }
+
     // ---- View state ----
-    in-out property <int> view-mode: 3; // 0 original, 1 reduced, 2 outlines, 3 split
+    in-out property <int> view-mode: 3; // 0 original, 1 reduced, 2 outlines, 3 split, 4 stencil layers
     in-out property <bool> fit-mode: true;
     in-out property <float> zoom: 1.0;
     in-out property <length> pan-x;
@@ -232,7 +254,7 @@ export component AppWindow inherits Window {
         }
         Menu {
             title: "Edit";
-            MenuItem { title: "Undo"; enabled: false; shortcut: @keys(Control + Z); }
+            MenuItem { title: "Undo Bridge Edit"; enabled: root.can-undo; shortcut: @keys(Control + Z); activated => { root.undo(); } }
             MenuItem { title: "Redo"; enabled: false; shortcut: @keys(Control + Shift + Z); }
             MenuSeparator { }
             MenuItem { title: "Add Color"; enabled: root.palette-editable; activated => { root.add-swatch(); } }
@@ -248,6 +270,7 @@ export component AppWindow inherits Window {
             MenuItem { title: "Color-Reduced Preview"; shortcut: @keys(Control + Digit2); activated => { root.view-mode = 1; } }
             MenuItem { title: "Cut / Outline View"; shortcut: @keys(Control + Digit3); activated => { root.view-mode = 2; } }
             MenuItem { title: "Split: Original | Preview"; shortcut: @keys(Control + Digit4); activated => { root.view-mode = 3; } }
+            MenuItem { title: "Stencil Layers (edit bridges)"; shortcut: @keys(Control + Digit5); activated => { root.view-mode = 4; } }
             MenuSeparator { }
             MenuItem { title: "Zoom In"; shortcut: @keys(Control + Equals); activated => { root.zoom-center(1.25); } }
             MenuItem { title: "Zoom Out"; shortcut: @keys(Control + HyphenMinus); activated => { root.zoom-center(0.8); } }
@@ -426,6 +449,7 @@ export component AppWindow inherits Window {
                     RibbonButton { icon: @image-url("icons/split.svg"); text: "Split"; checked: root.view-mode == 3; tooltip: "Original | Preview split (Ctrl+4)"; clicked => { root.view-mode = 3; } }
                     RibbonButton { icon: @image-url("icons/reduced.svg"); text: "Preview"; checked: root.view-mode == 1; tooltip: "Color-reduced preview (Ctrl+2)"; clicked => { root.view-mode = 1; } }
                     RibbonButton { icon: @image-url("icons/outline.svg"); text: "Outlines"; checked: root.view-mode == 2; tooltip: "Cut / outline view (Ctrl+3)"; clicked => { root.view-mode = 2; } }
+                    RibbonButton { icon: @image-url("icons/stencil.svg"); text: "Layers"; enabled: root.mode == 0; checked: root.view-mode == 4; tooltip: "Stencil sheets one by one; click to add or remove bridges (Ctrl+5)"; clicked => { root.view-mode = 4; } }
                 }
             }
 
@@ -525,6 +549,7 @@ export component AppWindow inherits Window {
                     RibbonButton { icon: @image-url("icons/reduced.svg"); text: "Preview"; checked: root.view-mode == 1; tooltip: "Ctrl+2"; clicked => { root.view-mode = 1; } }
                     RibbonButton { icon: @image-url("icons/outline.svg"); text: "Outlines"; checked: root.view-mode == 2; tooltip: "Ctrl+3"; clicked => { root.view-mode = 2; } }
                     RibbonButton { icon: @image-url("icons/split.svg"); text: "Split"; checked: root.view-mode == 3; tooltip: "Ctrl+4"; clicked => { root.view-mode = 3; } }
+                    RibbonButton { icon: @image-url("icons/stencil.svg"); text: "Layers"; enabled: root.mode == 0; checked: root.view-mode == 4; tooltip: "Stencil sheets; click to add/remove bridges (Ctrl+5)"; clicked => { root.view-mode = 4; } }
                 }
                 RibbonGroup {
                     title: "Zoom";
@@ -568,7 +593,7 @@ export component AppWindow inherits Window {
                             maximum: 40;
                             step: 1;
                             value: root.frame-width;
-                            changed(v) => { root.frame-width = round(v); }
+                            changed(v) => { root.frame-width = round(v); root.stencil-options-changed(); }
                         }
                         CheckBox { text: "Registration holes"; checked <=> root.registration-marks; }
                     }
@@ -581,7 +606,7 @@ export component AppWindow inherits Window {
                         padding-right: 4px;
                         alignment: center;
                         spacing: 2px;
-                        CheckBox { text: "Bridge floating pieces"; checked <=> root.bridge-islands; }
+                        CheckBox { text: "Bridge floating pieces"; checked <=> root.bridge-islands; toggled => { root.stencil-options-changed(); } }
                         LabeledSlider {
                             label: "Bridge width";
                             value-text: round(root.bridge-width * 10) / 10 + " mm";
@@ -590,7 +615,7 @@ export component AppWindow inherits Window {
                             step: 0.1;
                             enabled: root.bridge-islands;
                             value: root.bridge-width;
-                            changed(v) => { root.bridge-width = v; }
+                            changed(v) => { root.bridge-width = v; root.stencil-options-changed(); }
                         }
                     }
                     VerticalLayout {
@@ -606,7 +631,7 @@ export component AppWindow inherits Window {
                             step: 1;
                             enabled: root.bridge-islands;
                             value: root.min-island;
-                            changed(v) => { root.min-island = round(v); }
+                            changed(v) => { root.min-island = round(v); root.stencil-options-changed(); }
                         }
                     }
                 }
@@ -796,6 +821,8 @@ export component AppWindow inherits Window {
                 property <length> pinch-start-py;
                 property <length> pinch-start-cx;
                 property <length> pinch-start-cy;
+                property <length> press-x;
+                property <length> press-y;
                 property <length> drag-start-x;
                 property <length> drag-start-y;
 
@@ -829,7 +856,10 @@ export component AppWindow inherits Window {
                     height: canvas.disp-h;
                     image-fit: fill;
                     image-rendering: canvas.rendering;
-                    source: root.view-mode == 0 ? root.original-image : root.view-mode == 2 ? root.outline-image : root.reduced-image;
+                    source: root.view-mode == 0 ? root.original-image
+                        : root.view-mode == 2 ? root.outline-image
+                        : (root.view-mode == 4 && root.mode == 0) ? root.layer-image
+                        : root.reduced-image;
                 }
                 if root.has-image && root.view-mode == 3: Rectangle {
                     x: 0px;
@@ -875,9 +905,18 @@ export component AppWindow inherits Window {
 
                     pan-area := TouchArea {
                         enabled: root.has-image;
-                        mouse-cursor: self.pressed ? MouseCursor.grabbing : MouseCursor.default;
+                        mouse-cursor: self.pressed ? MouseCursor.grabbing : (root.view-mode == 4 && root.mode == 0) ? MouseCursor.crosshair : MouseCursor.default;
                         pointer-event(ev) => {
+                            if (ev.kind == PointerEventKind.up && root.view-mode == 4 && root.mode == 0
+                                && abs(self.mouse-x - canvas.press-x) < 6px && abs(self.mouse-y - canvas.press-y) < 6px) {
+                                // a tap / click (not a drag): edit bridges at that image pixel
+                                root.canvas-clicked(
+                                    (self.mouse-x - canvas.img-x) / canvas.disp-w * root.image-width,
+                                    (self.mouse-y - canvas.img-y) / canvas.disp-h * root.image-height);
+                            }
                             if (ev.kind == PointerEventKind.down) {
+                                canvas.press-x = self.mouse-x;
+                                canvas.press-y = self.mouse-y;
                                 if (root.fit-mode) {
                                     root.zoom = root.fit-zoom;
                                     root.pan-x = 0px;
@@ -947,6 +986,74 @@ export component AppWindow inherits Window {
                     color: #ffffffb0;
                     font-size: 10.5px;
                     font-weight: 700;
+                }
+                // ---- Stencil layers: layer chips (top) and bridge info (bottom) ----
+                if root.has-image && root.view-mode == 4 && root.mode == 0: Rectangle {
+                    x: (canvas.width - self.width) / 2;
+                    y: 10px;
+                    width: min(canvas.width - 20px, chips-row.preferred-width + 16px);
+                    height: 40px;
+                    border-radius: 20px;
+                    background: #000000b8;
+                    chips-row := HorizontalLayout {
+                        padding: 6px;
+                        spacing: 6px;
+                        for chip[i] in root.layer-chips: Rectangle {
+                            width: chip-text.preferred-width + 36px;
+                            border-radius: 14px;
+                            background: i == root.layer-index ? Theme.accent : cta.has-hover ? Theme.hover : transparent;
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 10px;
+                                spacing: 6px;
+                                Rectangle {
+                                    width: 14px;
+                                    height: 14px;
+                                    y: (parent.height - self.height) / 2;
+                                    border-radius: 7px;
+                                    background: chip.color;
+                                    border-width: 1px;
+                                    border-color: #ffffff60;
+                                }
+                                chip-text := Text {
+                                    text: chip.label;
+                                    color: white;
+                                    font-size: Theme.font-small;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            cta := TouchArea { clicked => { root.layer-selected(i); } }
+                        }
+                    }
+                }
+                if root.has-image && root.view-mode == 4 && root.mode == 0: Rectangle {
+                    x: (canvas.width - self.width) / 2;
+                    y: canvas.height - self.height - 44px;
+                    width: min(canvas.width - 20px, info-row.preferred-width + 20px);
+                    height: 36px;
+                    border-radius: 18px;
+                    background: #000000b8;
+                    info-row := HorizontalLayout {
+                        padding-left: 14px;
+                        padding-right: 6px;
+                        spacing: 10px;
+                        Text {
+                            text: root.layer-info + "   ·   Click a bridge to remove it, click in a cut to add one";
+                            color: white;
+                            font-size: Theme.font-small;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                        Rectangle {
+                            width: reset-text.preferred-width + 20px;
+                            height: 26px;
+                            y: 5px;
+                            border-radius: 13px;
+                            background: rta.has-hover ? Theme.pressed : Theme.hover;
+                            reset-text := Text { text: "Reset bridges"; color: white; font-size: Theme.font-small; }
+                            rta := TouchArea { clicked => { root.reset-layer-bridges(); } }
+                        }
+                    }
                 }
                 if root.exporting: Rectangle {
                     x: canvas.width - 110px;
@@ -1051,10 +1158,10 @@ export component AppWindow inherits Window {
                                 maximum: 40;
                                 step: 1;
                                 value: root.frame-width;
-                                changed(v) => { root.frame-width = round(v); }
+                                changed(v) => { root.frame-width = round(v); root.stencil-options-changed(); }
                             }
                             if root.mode == 0: CheckBox { text: "Registration holes"; checked <=> root.registration-marks; }
-                            if root.mode == 0: CheckBox { text: "Bridge floating pieces"; checked <=> root.bridge-islands; }
+                            if root.mode == 0: CheckBox { text: "Bridge floating pieces"; checked <=> root.bridge-islands; toggled => { root.stencil-options-changed(); } }
                             if root.mode == 0: LabeledSlider {
                                 label: "Bridge width";
                                 value-text: round(root.bridge-width * 10) / 10 + " mm";
@@ -1063,7 +1170,7 @@ export component AppWindow inherits Window {
                                 step: 0.1;
                                 enabled: root.bridge-islands;
                                 value: root.bridge-width;
-                                changed(v) => { root.bridge-width = v; }
+                                changed(v) => { root.bridge-width = v; root.stencil-options-changed(); }
                             }
                             if root.mode == 0: LabeledSlider {
                                 label: "Drop pieces under";
@@ -1073,7 +1180,7 @@ export component AppWindow inherits Window {
                                 step: 1;
                                 enabled: root.bridge-islands;
                                 value: root.min-island;
-                                changed(v) => { root.min-island = round(v); }
+                                changed(v) => { root.min-island = round(v); root.stencil-options-changed(); }
                             }
 
                             SectionLabel { text: "OUTPUT"; }

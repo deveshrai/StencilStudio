@@ -135,3 +135,66 @@ pub fn render_smooth_outlines(
     }
     to_rgba_image(pm)
 }
+
+/// Preview of one stencil sheet, cropped to the image area so it lines up with the
+/// other views: cut-outs in the layer's paint color, sheet material dark, bridges
+/// highlighted (blue automatic, green manual) and floating pieces in red.
+pub fn render_layer_preview(layer: &crate::stencil::StencilLayer, img_w: u32, img_h: u32, px_per_mm: f32) -> RgbaImage {
+    let scale = (2400.0 / img_w.max(img_h) as f32).clamp(1.0, 2.0);
+    let (w, h) = (
+        (img_w as f32 * scale).round() as u32,
+        (img_h as f32 * scale).round() as u32,
+    );
+    let mut pm = tiny_skia::Pixmap::new(w.max(1), h.max(1)).expect("pixmap");
+    // Cut-outs show the paint; the sheet material must contrast with it, so dark paints
+    // get a light "card" sheet and light paints a dark one.
+    let c = layer.color;
+    let dark_paint = c.to_lab().l < 50.0;
+    let (cut, material) = if dark_paint {
+        (c, Rgb8::new(222, 218, 208))
+    } else {
+        let mix = |v: u8| ((v as u16 * 3 + 255) / 4) as u8;
+        (Rgb8::new(mix(c.r), mix(c.g), mix(c.b)), Rgb8::new(58, 61, 70))
+    };
+    pm.fill(tiny_skia::Color::from_rgba8(cut.r, cut.g, cut.b, 255));
+    let k = px_per_mm * scale;
+    let off = layer.image_offset_mm;
+    let tf = tiny_skia::Transform::from_row(k, 0.0, 0.0, k, -off * k, -off * k);
+    let paint = |r: u8, g: u8, b: u8, a: u8| {
+        let mut p = tiny_skia::Paint::default();
+        p.set_color_rgba8(r, g, b, a);
+        p.anti_alias = true;
+        p
+    };
+    for (i, piece) in layer.pieces.iter().enumerate() {
+        let rings: Vec<Vec<crate::vector::Pt>> = std::iter::once(piece.outer.clone())
+            .chain(piece.holes.iter().cloned())
+            .collect();
+        if let Some(path) = build_path(&rings, true) {
+            let p = if i == 0 {
+                paint(material.r, material.g, material.b, 255)
+            } else {
+                paint(220, 50, 50, 255)
+            };
+            pm.fill_path(&path, &p, tiny_skia::FillRule::EvenOdd, tf, None);
+        }
+    }
+    for b in &layer.bridges {
+        let r = b.rect_mm;
+        if let Some(rect) = tiny_skia::Rect::from_ltrb(r[0], r[1], r[2], r[3]) {
+            let path = tiny_skia::PathBuilder::from_rect(rect);
+            let (fill, edge) = if b.manual {
+                (paint(46, 204, 113, 200), paint(20, 120, 60, 255))
+            } else {
+                (paint(76, 141, 255, 200), paint(30, 80, 170, 255))
+            };
+            pm.fill_path(&path, &fill, tiny_skia::FillRule::Winding, tf, None);
+            let stroke = tiny_skia::Stroke {
+                width: 1.5 / k,
+                ..Default::default()
+            };
+            pm.stroke_path(&path, &edge, &stroke, tf, None);
+        }
+    }
+    to_rgba_image(pm)
+}

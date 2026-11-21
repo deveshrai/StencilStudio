@@ -11,10 +11,12 @@ use platform::PickKind;
 
 use slint::{ComponentHandle, Image, Model, ModelRc, SharedString, VecModel};
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 use stencil_core::pipeline::fit_within;
+use stencil_core::stencil::{BridgeEdits, StencilOptions};
 use stencil_core::{DistanceMetric, Mode, OutputSize, Palette, PaperSize, Rgb8, Settings, Swatch};
 
 slint::include_modules!();
@@ -42,6 +44,18 @@ struct State {
     /// In-app file browser (platforms without native dialogs).
     picker_kind: Option<PickKind>,
     picker_paths: Vec<PathBuf>,
+    /// Manual bridge edits per stencil layer (palette index), plus undo history.
+    bridge_edits: BTreeMap<u16, BridgeEdits>,
+    undo: Vec<BTreeMap<u16, BridgeEdits>>,
+    /// The layer currently shown in the Layers view, for click hit-testing.
+    layer_hit: Option<LayerHit>,
+}
+
+struct LayerHit {
+    palette_index: u16,
+    bridges: Vec<stencil_core::stencil::Bridge>,
+    image_offset_mm: f32,
+    px_per_mm: f32,
 }
 
 thread_local! {
@@ -58,6 +72,9 @@ thread_local! {
         last_selected: Vec::new(),
         picker_kind: None,
         picker_paths: Vec::new(),
+        bridge_edits: BTreeMap::new(),
+        undo: Vec::new(),
+        layer_hit: None,
     });
 }
 
@@ -167,6 +184,10 @@ fn request_processing(ui: &AppWindow) {
             image,
             palette: current_palette(ui, st),
             settings: read_settings(ui, st),
+            layer: (ui.get_mode() == 0 && ui.get_view_mode() == 4).then(|| worker::LayerRequest {
+                index: ui.get_layer_index().max(0) as usize,
+                options: stencil_options(ui, st),
+            }),
         };
         if tx.send(job).is_ok() {
             ui.set_busy(true);
@@ -205,6 +226,129 @@ fn apply_result(ui: &AppWindow, r: worker::JobResult) {
     ui.set_threshold_text(format!("{} px", r.min_region_px).into());
     ui.set_output_size_text(format!("{:.0} × {:.0} mm", r.output_mm.0, r.output_mm.1).into());
     ui.set_timing_text(format!("{} ms", r.elapsed.as_millis()).into());
+
+    let chips: Vec<LayerChip> = r
+        .layers
+        .iter()
+        .enumerate()
+        .map(|(i, (_, c, name))| LayerChip {
+            color: rgb_to_slint(*c),
+            label: format!("{} {name}", i + 1).into(),
+        })
+        .collect();
+    ui.set_layer_chips(ModelRc::new(VecModel::from(chips)));
+    if let Some(l) = r.layer {
+        ui.set_layer_index(l.index as i32);
+        ui.set_layer_image(Image::from_rgba8(l.image));
+        let manual = l.bridges.iter().filter(|b| b.manual).count();
+        let mut info = format!(
+            "Layer {} · {} · {} bridge{} ({} added by you)",
+            l.index + 1,
+            l.name,
+            l.bridges.len(),
+            if l.bridges.len() == 1 { "" } else { "s" },
+            manual
+        );
+        if l.floating > 0 {
+            info += &format!(
+                " · ⚠ {} floating piece{}",
+                l.floating,
+                if l.floating == 1 { "" } else { "s" }
+            );
+        }
+        if l.dropped > 0 {
+            info += &format!(
+                " · {} tiny piece{} dropped",
+                l.dropped,
+                if l.dropped == 1 { "" } else { "s" }
+            );
+        }
+        ui.set_layer_info(info.into());
+        with_state(|st| {
+            st.layer_hit = Some(LayerHit {
+                palette_index: l.palette_index,
+                bridges: l.bridges,
+                image_offset_mm: l.image_offset_mm,
+                px_per_mm: r.px_per_mm,
+            })
+        });
+    }
+}
+
+/// Stencil sheet options from the UI, including the user's bridge edits.
+fn stencil_options(ui: &AppWindow, st: &State) -> StencilOptions {
+    let thickness = ui
+        .get_thickness_names()
+        .row_data(ui.get_thickness_index().max(0) as usize)
+        .and_then(|s| s.trim_end_matches(" mm").parse::<f32>().ok())
+        .unwrap_or(1.0);
+    StencilOptions {
+        thickness_mm: thickness,
+        frame_mm: ui.get_frame_width(),
+        registration_marks: ui.get_registration_marks(),
+        bridge_islands: ui.get_bridge_islands(),
+        bridge_width_mm: ui.get_bridge_width(),
+        min_island_mm2: ui.get_min_island(),
+        edits: st.bridge_edits.clone(),
+        ..Default::default()
+    }
+}
+
+/// A click in the Layers view at image pixel (x, y): toggles the bridge under the
+/// cursor, or adds a bridge across the cut there.
+fn layer_click(ui: &AppWindow, x: f32, y: f32) {
+    let msg = with_state(|st| {
+        let hit = st.layer_hit.as_ref()?;
+        let p = [
+            x / hit.px_per_mm + hit.image_offset_mm,
+            y / hit.px_per_mm + hit.image_offset_mm,
+        ];
+        let color = hit.palette_index;
+        // generous margin so thin bridges are easy to hit with a finger
+        let margin = (0.8f32).max(6.0 / hit.px_per_mm);
+        let under = hit
+            .bridges
+            .iter()
+            .filter(|b| b.contains(p, margin))
+            .min_by(|a, b| centre_dist(a, p).total_cmp(&centre_dist(b, p)))
+            .copied();
+        st.undo.push(st.bridge_edits.clone());
+        let edits = st.bridge_edits.entry(color).or_default();
+        Some(match under {
+            Some(b) if b.manual => {
+                // drop the added point that produced this bridge
+                if let Some(i) = (0..edits.added.len())
+                    .min_by(|&i, &j| dist(edits.added[i], centre(&b)).total_cmp(&dist(edits.added[j], centre(&b))))
+                {
+                    edits.added.remove(i);
+                }
+                "Removed your bridge"
+            }
+            Some(b) => {
+                edits.removed.push(centre(&b));
+                "Removed bridge (Ctrl+Z to undo)"
+            }
+            None => {
+                edits.added.push(p);
+                "Added a bridge across the cut (click it again to remove)"
+            }
+        })
+    });
+    if let Some(m) = msg {
+        ui.set_can_undo(true);
+        ui.set_status_text(m.into());
+        request_processing(ui);
+    }
+}
+
+fn centre(b: &stencil_core::stencil::Bridge) -> [f32; 2] {
+    [(b.rect_mm[0] + b.rect_mm[2]) / 2.0, (b.rect_mm[1] + b.rect_mm[3]) / 2.0]
+}
+fn dist(a: [f32; 2], b: [f32; 2]) -> f32 {
+    (a[0] - b[0]).hypot(a[1] - b[1])
+}
+fn centre_dist(b: &stencil_core::stencil::Bridge, p: [f32; 2]) -> f32 {
+    dist(centre(b), p)
 }
 
 /// Decode an image honoring EXIF orientation; transparent pixels are composited onto white.
@@ -255,7 +399,12 @@ fn open_image_path(ui: &AppWindow, path: &Path) {
             with_state(|st| {
                 st.source = Some(img);
                 st.working = Some(Arc::new(working));
+                st.bridge_edits.clear();
+                st.undo.clear();
+                st.layer_hit = None;
             });
+            ui.set_can_undo(false);
+            ui.set_layer_index(0);
             request_processing(ui);
         }
         Err(e) => {
@@ -390,20 +539,7 @@ fn start_export(ui: &AppWindow, format: export_job::Format) {
     ) else {
         return;
     };
-    let thickness = ui
-        .get_thickness_names()
-        .row_data(ui.get_thickness_index().max(0) as usize)
-        .and_then(|s| s.trim_end_matches(" mm").parse::<f32>().ok())
-        .unwrap_or(1.0);
-    let options = stencil_core::stencil::StencilOptions {
-        thickness_mm: thickness,
-        frame_mm: ui.get_frame_width(),
-        registration_marks: ui.get_registration_marks(),
-        bridge_islands: ui.get_bridge_islands(),
-        bridge_width_mm: ui.get_bridge_width(),
-        min_island_mm2: ui.get_min_island(),
-        ..Default::default()
-    };
+    let options = with_state(|st| stencil_options(ui, st));
     let job = export_job::ExportJob {
         source,
         palette,
@@ -542,6 +678,8 @@ Ctrl+Shift+S\tSave palette
 Ctrl+E\tExport stencil layers (SVG)
 Ctrl+P\tPrint manual color chart
 Ctrl+1 / 2 / 3 / 4\tOriginal / Preview / Outlines / Split
+Ctrl+5\tStencil layers (click to add/remove bridges)
+Ctrl+Z\tUndo bridge edit
 Ctrl+= / Ctrl+-\tZoom in / out (or Ctrl+scroll)
 Ctrl+0\tFit to window
 Ctrl+Alt+0\tActual pixels
@@ -760,6 +898,56 @@ pub fn run(initial: Option<PathBuf>) -> Result<(), slint::PlatformError> {
             )
             .into(),
         );
+    });
+
+    let w = ui.as_weak();
+    ui.on_layer_selected(move |i| {
+        let ui = w.unwrap();
+        ui.set_layer_index(i);
+        request_processing(&ui);
+    });
+    let w = ui.as_weak();
+    ui.on_canvas_clicked(move |x, y| {
+        let ui = w.unwrap();
+        if ui.get_mode() == 0 && ui.get_view_mode() == 4 {
+            layer_click(&ui, x, y);
+        }
+    });
+    let w = ui.as_weak();
+    ui.on_stencil_options_changed(move || {
+        let ui = w.unwrap();
+        if ui.get_mode() == 0 && ui.get_view_mode() == 4 {
+            request_processing(&ui);
+        }
+    });
+    let w = ui.as_weak();
+    ui.on_reset_layer_bridges(move || {
+        let ui = w.unwrap();
+        let changed = with_state(|st| {
+            let color = st.layer_hit.as_ref()?.palette_index;
+            st.undo.push(st.bridge_edits.clone());
+            st.bridge_edits.remove(&color);
+            Some(())
+        });
+        if changed.is_some() {
+            ui.set_can_undo(true);
+            ui.set_status_text("Bridges on this layer reset to automatic".into());
+            request_processing(&ui);
+        }
+    });
+    let w = ui.as_weak();
+    ui.on_undo(move || {
+        let ui = w.unwrap();
+        let more = with_state(|st| {
+            let prev = st.undo.pop()?;
+            st.bridge_edits = prev;
+            Some(!st.undo.is_empty())
+        });
+        if let Some(more) = more {
+            ui.set_can_undo(more);
+            ui.set_status_text("Undid bridge edit".into());
+            request_processing(&ui);
+        }
     });
 
     let w = ui.as_weak();

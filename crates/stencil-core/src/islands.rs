@@ -84,6 +84,8 @@ pub(crate) struct IslandRules {
     pub min_px: u64,
     /// Pieces at least this big are always bridged, however long the bridges.
     pub always_bridge_px: u64,
+    /// A removed-bridge point this close (px) to an automatic bridge suppresses it.
+    pub removed_tol_px: f32,
 }
 
 /// Bridge or drop every island in `mask` (`w`×`h`). The main sheet is the component
@@ -95,6 +97,7 @@ pub(crate) fn resolve_islands(
     w: u32,
     h: u32,
     rules: &IslandRules,
+    removed: &[[f32; 2]],
     bridges: &mut Vec<[u32; 4]>,
 ) -> (usize, usize) {
     let IslandRules {
@@ -102,6 +105,7 @@ pub(crate) fn resolve_islands(
         bridge_px,
         min_px,
         always_bridge_px,
+        ..
     } = *rules;
     let (mut bridged, mut dropped) = (0, 0);
     // Several passes: a bridge may land on another island, which is handled next pass.
@@ -136,11 +140,22 @@ pub(crate) fn resolve_islands(
                 dropped += 1;
                 progress = true;
             } else {
+                // Bridges the user removed (clicked away) are skipped; if all of an
+                // island's bridges are removed it stays floating, as the user asked.
+                let mut painted = 0;
                 for (p, horizontal) in &plan {
-                    bridges.push(paint_bridge(mask, w, h, p, bridge_px.max(2), *horizontal));
+                    let r = bridge_rect(w, h, p, bridge_px.max(2), *horizontal);
+                    if removed.iter().any(|q| rect_near(r, *q, rules.removed_tol_px)) {
+                        continue;
+                    }
+                    fill_rect(mask, w, r);
+                    bridges.push(r);
+                    painted += 1;
                 }
-                bridged += 1;
-                progress = true;
+                if painted > 0 {
+                    bridged += 1;
+                    progress = true;
+                }
             }
         }
         if !progress {
@@ -248,25 +263,73 @@ fn plan_bridges(comps: &Components, island: u32, w: u32) -> Vec<(Probe, bool)> {
     }
 }
 
-/// Fill the bridge into `mask` and return its rectangle `[x0, y0, x1, y1)`.
-fn paint_bridge(mask: &mut [bool], w: u32, h: u32, p: &Probe, bw: u32, horizontal: bool) -> [u32; 4] {
+/// Rectangle `[x0, y0, x1, y1)` covered by the bridge for probe `p`.
+fn bridge_rect(w: u32, h: u32, p: &Probe, bw: u32, horizontal: bool) -> [u32; 4] {
     let (span, across) = if horizontal { (w, h) } else { (h, w) };
     // Overlap 2 px into both ends so the joint stays solid on slanted edges.
     let lo = p.from.min(p.to).saturating_sub(2);
     let hi = (p.from.max(p.to) + 2).min(span - 1);
     let a0 = p.line.saturating_sub(bw / 2);
     let a1 = (a0 + bw).min(across);
-    for t in lo..=hi {
-        for a in a0..a1 {
-            let i = if horizontal { a * w + t } else { t * w + a };
-            mask[i as usize] = true;
-        }
-    }
     if horizontal {
         [lo, a0, hi + 1, a1]
     } else {
         [a0, lo, a1, hi + 1]
     }
+}
+
+fn fill_rect(mask: &mut [bool], w: u32, r: [u32; 4]) {
+    for y in r[1]..r[3] {
+        for x in r[0]..r[2] {
+            mask[(y * w + x) as usize] = true;
+        }
+    }
+}
+
+fn rect_near(r: [u32; 4], q: [f32; 2], tol: f32) -> bool {
+    q[0] >= r[0] as f32 - tol && q[0] <= r[2] as f32 + tol && q[1] >= r[1] as f32 - tol && q[1] <= r[3] as f32 + tol
+}
+
+/// A user-placed bridge across the cut at `(x, y)`: spans to the nearest material
+/// on both sides, horizontally or vertically (whichever is shorter). Returns `None`
+/// if the point is on material or no direction reaches material on both sides.
+pub(crate) fn manual_bridge(mask: &mut [bool], w: u32, h: u32, x: f32, y: f32, bw: u32) -> Option<[u32; 4]> {
+    let (x, y) = (x.floor() as i64, y.floor() as i64);
+    if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 || mask[(y * w as i64 + x) as usize] {
+        return None;
+    }
+    // distance along a direction to the first solid pixel
+    let reach = |dx: i64, dy: i64| -> Option<i64> {
+        let (mut cx, mut cy, mut n) = (x, y, 0);
+        loop {
+            cx += dx;
+            cy += dy;
+            n += 1;
+            if cx < 0 || cy < 0 || cx >= w as i64 || cy >= h as i64 {
+                return None;
+            }
+            if mask[(cy * w as i64 + cx) as usize] {
+                return Some(n);
+            }
+        }
+    };
+    let hor = reach(-1, 0).zip(reach(1, 0));
+    let ver = reach(0, -1).zip(reach(0, 1));
+    let horizontal = match (hor, ver) {
+        (Some((l, r)), Some((u, d))) => l + r <= u + d,
+        (Some(_), None) => true,
+        (None, Some(_)) => false,
+        (None, None) => return None,
+    };
+    let (a, b) = if horizontal { hor.unwrap() } else { ver.unwrap() };
+    let (line, from, to) = if horizontal {
+        (y as u32, (x - a) as u32, (x + b) as u32)
+    } else {
+        (x as u32, (y - a) as u32, (y + b) as u32)
+    };
+    let r = bridge_rect(w, h, &Probe { line, from, to }, bw.max(2), horizontal);
+    fill_rect(mask, w, r);
+    Some(r)
 }
 
 #[cfg(test)]
@@ -279,6 +342,7 @@ mod tests {
             bridge_px,
             min_px,
             always_bridge_px,
+            removed_tol_px: 3.0,
         }
     }
 
@@ -298,7 +362,7 @@ mod tests {
         let mut m = ring_mask();
         assert_eq!(Components::label(&m, 40, 40).count(), 2);
         assert_eq!(
-            resolve_islands(&mut m, 40, 40, &rules(3, 4, 0), &mut Vec::new()),
+            resolve_islands(&mut m, 40, 40, &rules(3, 4, 0), &[], &mut Vec::new()),
             (1, 0)
         );
         assert_eq!(Components::label(&m, 40, 40).count(), 1);
@@ -316,16 +380,49 @@ mod tests {
             })
             .collect();
         assert_eq!(
-            resolve_islands(&mut m, 100, 100, &rules(2, 4, 10_000), &mut Vec::new()),
+            resolve_islands(&mut m, 100, 100, &rules(2, 4, 10_000), &[], &mut Vec::new()),
             (0, 1)
         );
+    }
+
+    #[test]
+    fn removed_bridge_is_skipped_and_manual_bridge_spans_cut() {
+        let mut m = ring_mask();
+        let mut b = Vec::new();
+        assert_eq!(resolve_islands(&mut m, 40, 40, &rules(3, 4, 0), &[], &mut b), (1, 0));
+        assert_eq!(b.len(), 2);
+        // remove one of the two bridges: the other still holds the centre
+        let r = b[0];
+        let centre = [(r[0] + r[2]) as f32 / 2.0, (r[1] + r[3]) as f32 / 2.0];
+        let mut m = ring_mask();
+        let mut b2 = Vec::new();
+        assert_eq!(
+            resolve_islands(&mut m, 40, 40, &rules(3, 4, 0), &[centre], &mut b2),
+            (1, 0)
+        );
+        assert_eq!(b2.len(), 1);
+        // remove both: the centre stays floating
+        let r2 = b[1];
+        let c2 = [(r2[0] + r2[2]) as f32 / 2.0, (r2[1] + r2[3]) as f32 / 2.0];
+        let mut m = ring_mask();
+        assert_eq!(
+            resolve_islands(&mut m, 40, 40, &rules(3, 4, 0), &[centre, c2], &mut Vec::new()),
+            (0, 0)
+        );
+        assert_eq!(Components::label(&m, 40, 40).count(), 2);
+        // a manual bridge clicked in the ring cut connects it again
+        let br = manual_bridge(&mut m, 40, 40, 20.5, 9.5, 3).expect("bridge");
+        assert!(br[3] - br[1] > 3 || br[2] - br[0] > 3);
+        assert_eq!(Components::label(&m, 40, 40).count(), 1);
+        // clicking on material does nothing
+        assert!(manual_bridge(&mut m, 40, 40, 2.0, 2.0, 3).is_none());
     }
 
     #[test]
     fn drops_small_island() {
         let mut m = ring_mask();
         assert_eq!(
-            resolve_islands(&mut m, 40, 40, &rules(3, 10_000, 0), &mut Vec::new()),
+            resolve_islands(&mut m, 40, 40, &rules(3, 10_000, 0), &[], &mut Vec::new()),
             (0, 1)
         );
         let c = Components::label(&m, 40, 40);

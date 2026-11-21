@@ -2,11 +2,12 @@
 //! registration holes, and cut-outs where that color is painted.
 
 use crate::color::Rgb8;
-use crate::islands::{IslandRules, resolve_islands};
+use crate::islands::{IslandRules, manual_bridge, resolve_islands};
 use crate::palette::Palette;
 use crate::regions::Segmentation;
 use crate::vector::{Pt, SmoothBoundaries, simplify_closed, trace_mask};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StencilOptions {
@@ -27,6 +28,35 @@ pub struct StencilOptions {
     /// Floating pieces smaller than this (mm²) are dropped instead of bridged. Mid-size
     /// pieces whose bridges would be far longer than the piece are dropped too.
     pub min_island_mm2: f32,
+    /// User bridge edits per layer, keyed by palette index.
+    #[serde(default)]
+    pub edits: BTreeMap<u16, BridgeEdits>,
+}
+
+/// Manual changes to one layer's bridges. Points are sheet millimetres (origin at the
+/// sheet's top-left, frame included), so they survive any processing resolution.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct BridgeEdits {
+    /// Automatic bridges at (or within ~1.5 mm of) these points are suppressed.
+    pub removed: Vec<Pt>,
+    /// A bridge is placed across the cut at each of these points.
+    pub added: Vec<Pt>,
+}
+
+/// One bridge, for display and hit-testing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Bridge {
+    /// `[x0, y0, x1, y1]` in sheet millimetres.
+    pub rect_mm: [f32; 4],
+    /// Placed by the user (true) or automatically (false).
+    pub manual: bool,
+}
+
+impl Bridge {
+    pub fn contains(&self, p: Pt, margin_mm: f32) -> bool {
+        let r = self.rect_mm;
+        p[0] >= r[0] - margin_mm && p[0] <= r[2] + margin_mm && p[1] >= r[1] - margin_mm && p[1] <= r[3] + margin_mm
+    }
 }
 
 impl Default for StencilOptions {
@@ -40,6 +70,7 @@ impl Default for StencilOptions {
             bridge_islands: true,
             bridge_width_mm: 1.2,
             min_island_mm2: 6.0,
+            edits: BTreeMap::new(),
         }
     }
 }
@@ -68,6 +99,10 @@ pub struct StencilLayer {
     pub bridged: usize,
     /// Floating pieces that were too small and were dropped.
     pub dropped: usize,
+    /// Every bridge on this sheet (automatic and manual).
+    pub bridges: Vec<Bridge>,
+    /// Offset of the image's top-left corner inside the sheet (the frame width), mm.
+    pub image_offset_mm: f32,
 }
 
 impl StencilLayer {
@@ -96,6 +131,19 @@ impl StencilLayer {
     }
 }
 
+/// Palette colors used in `seg`, in painting order (lightest first).
+pub fn layer_order(seg: &Segmentation, palette: &Palette) -> Vec<u16> {
+    let mut used: Vec<u16> = seg.region_color.clone();
+    used.sort_unstable();
+    used.dedup();
+    used.sort_by(|a, b| {
+        let la = palette.swatches[*a as usize].lab().l;
+        let lb = palette.swatches[*b as usize].lab().l;
+        lb.total_cmp(&la)
+    });
+    used
+}
+
 /// Build stencil layers for every palette color used in `seg`.
 pub fn build_layers(
     seg: &Segmentation,
@@ -104,26 +152,29 @@ pub fn build_layers(
     px_per_mm: f32,
     opts: &StencilOptions,
 ) -> Vec<StencilLayer> {
-    let mut used: Vec<u16> = seg.region_color.clone();
-    used.sort_unstable();
-    used.dedup();
-    // Paint light colors first.
-    used.sort_by(|a, b| {
-        let la = palette.swatches[*a as usize].lab().l;
-        let lb = palette.swatches[*b as usize].lab().l;
-        lb.total_cmp(&la)
-    });
-    used.iter()
+    layer_order(seg, palette)
+        .iter()
         .enumerate()
-        .map(|(i, &c)| {
-            let s = &palette.swatches[c as usize];
-            let mut layer = build_layer(seg, sb, c, px_per_mm, opts);
-            layer.number = i + 1;
-            layer.name = s.name.clone();
-            layer.color = s.color;
-            layer
-        })
+        .map(|(i, &c)| build_layer_for(seg, sb, palette, c, i + 1, px_per_mm, opts))
         .collect()
+}
+
+/// Build the single stencil layer for palette color `color` (`number` = painting order).
+pub fn build_layer_for(
+    seg: &Segmentation,
+    sb: &SmoothBoundaries,
+    palette: &Palette,
+    color: u16,
+    number: usize,
+    px_per_mm: f32,
+    opts: &StencilOptions,
+) -> StencilLayer {
+    let s = &palette.swatches[color as usize];
+    let mut layer = build_layer(seg, sb, color, px_per_mm, opts);
+    layer.number = number;
+    layer.name = s.name.clone();
+    layer.color = s.color;
+    layer
 }
 
 fn build_layer(
@@ -152,10 +203,17 @@ fn build_layer(
 
     // Decide bridges / drops on a scratch copy (painting bridges keeps connectivity right
     // across passes), then remove dropped pieces from the real mask.
+    let edits = opts.edits.get(&color).cloned().unwrap_or_default();
+    let bridge_px = (opts.bridge_width_mm * px_per_mm).round() as u32;
+    let mut scratch = solid.clone();
+    // User-placed bridges go in first, so they also decide what is still floating.
+    let manual: Vec<[u32; 4]> = edits
+        .added
+        .iter()
+        .filter_map(|p| manual_bridge(&mut scratch, pw, ph, p[0] * px_per_mm, p[1] * px_per_mm, bridge_px))
+        .collect();
     let mut bridges: Vec<[u32; 4]> = Vec::new();
     let (bridged, dropped) = if opts.bridge_islands {
-        let mut scratch = solid.clone();
-        let bridge_px = (opts.bridge_width_mm * px_per_mm).round() as u32;
         let min_px = (opts.min_island_mm2 * px_per_mm * px_per_mm).round() as u64;
         // Pieces of 100 mm² or more are always worth keeping.
         let always_px = (100.0 * px_per_mm * px_per_mm).round() as u64;
@@ -164,15 +222,35 @@ fn build_layer(
             bridge_px,
             min_px,
             always_bridge_px: always_px,
+            removed_tol_px: 1.5 * px_per_mm,
         };
-        let r = resolve_islands(&mut scratch, pw, ph, &rules, &mut bridges);
-        for (s, &k) in solid.iter_mut().zip(&scratch) {
-            *s &= k; // bridging only adds material; anything removed was dropped
-        }
-        r
+        let removed: Vec<[f32; 2]> = edits
+            .removed
+            .iter()
+            .map(|p| [p[0] * px_per_mm, p[1] * px_per_mm])
+            .collect();
+        resolve_islands(&mut scratch, pw, ph, &rules, &removed, &mut bridges)
     } else {
         (0, 0)
     };
+    for (s, &k) in solid.iter_mut().zip(&scratch) {
+        *s &= k; // bridging only adds material; anything removed was dropped
+    }
+    let all_bridges: Vec<Bridge> = manual
+        .iter()
+        .map(|&r| (r, true))
+        .chain(bridges.iter().map(|&r| (r, false)))
+        .map(|(r, manual)| Bridge {
+            rect_mm: [
+                r[0] as f32 / px_per_mm,
+                r[1] as f32 / px_per_mm,
+                r[2] as f32 / px_per_mm,
+                r[3] as f32 / px_per_mm,
+            ],
+            manual,
+        })
+        .collect();
+    let bridges: Vec<[u32; 4]> = manual.into_iter().chain(bridges).collect();
 
     let to_mm = |cx: u32, cy: u32| -> Pt {
         let p = if cx >= f && cy >= f && cx <= f + w && cy <= f + h {
@@ -257,6 +335,8 @@ fn build_layer(
         pieces,
         bridged,
         dropped,
+        bridges: all_bridges,
+        image_offset_mm: f as f32 / px_per_mm,
     }
 }
 
@@ -301,6 +381,27 @@ mod tests {
         assert_eq!(black.island_count(), 0);
         assert_eq!((black.bridged, black.dropped), (1, 0));
         assert_eq!(black.pieces[0].holes.len(), 2 + 4);
+
+        // Removing both bridges (points in sheet mm) leaves the centre floating...
+        assert_eq!(black.bridges.len(), 2);
+        let centre = |b: &Bridge| [(b.rect_mm[0] + b.rect_mm[2]) / 2.0, (b.rect_mm[1] + b.rect_mm[3]) / 2.0];
+        let mut edited = StencilOptions::default();
+        edited.edits.insert(
+            1,
+            BridgeEdits {
+                removed: black.bridges.iter().map(centre).collect(),
+                added: vec![],
+            },
+        );
+        let layers = build_layers(&seg, &sb, &pal, 2.0, &edited);
+        let black2 = layers.iter().find(|l| l.name == "Black").unwrap();
+        assert_eq!((black2.island_count(), black2.bridges.len()), (1, 0));
+        // ...and a click in the ring cut (sheet mm: frame 12 mm + 15 px / 2 px-per-mm) adds one back.
+        edited.edits.get_mut(&1).unwrap().added.push([12.0 + 15.0, 12.0 + 7.5]);
+        let layers = build_layers(&seg, &sb, &pal, 2.0, &edited);
+        let black3 = layers.iter().find(|l| l.name == "Black").unwrap();
+        assert_eq!(black3.island_count(), 0);
+        assert!(black3.bridges.iter().any(|b| b.manual));
 
         // A tiny centre is dropped instead.
         let tiny = StencilOptions {
