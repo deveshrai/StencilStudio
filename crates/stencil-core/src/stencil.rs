@@ -207,13 +207,17 @@ fn build_layer(
     // Robust union: merges bridges and resolves any self-intersections left by smoothing.
     let shapes = subject.overlay(&clip, OverlayRule::Union, FillRule::EvenOdd);
     let ring = |c: &Vec<[f64; 2]>| -> Vec<Pt> { c.iter().map(|p| [p[0] as f32, p[1] as f32]).collect() };
+    // Drop microscopic slivers the union can leave behind (< 0.02 mm²).
+    const MIN_RING_MM2: f32 = 0.02;
+    let big = |r: &Vec<Pt>| r.len() >= 3 && crate::vector::signed_area(r).abs() >= MIN_RING_MM2;
     let mut pieces: Vec<SolidPolygon> = shapes
         .iter()
         .filter(|sh| !sh.is_empty())
         .map(|sh| SolidPolygon {
             outer: ring(&sh[0]),
-            holes: sh[1..].iter().map(ring).collect(),
+            holes: sh[1..].iter().map(ring).filter(big).collect(),
         })
+        .filter(|p| big(&p.outer))
         .collect();
     // Main sheet first (largest outline).
     pieces.sort_by(|a, b| {

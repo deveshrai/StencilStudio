@@ -30,6 +30,14 @@ pub struct Settings {
     pub curve_smoothing_mm: f32,
     /// Paint-by-numbers: smooth vector outlines (true) or pixel-exact raster outlines.
     pub smooth_outlines: bool,
+    /// Weight sharp, detailed areas more when choosing colors, so the in-focus subject
+    /// gets its colors ahead of a blurry background.
+    #[serde(default = "default_true")]
+    pub focus_on_subject: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -43,6 +51,7 @@ impl Default for Settings {
             output: OutputSize::default(),
             curve_smoothing_mm: 0.4,
             smooth_outlines: true,
+            focus_on_subject: true,
         }
     }
 }
@@ -104,7 +113,8 @@ pub fn process_with_selection(
         img
     };
 
-    let hist = Histogram::build(src);
+    let weights = settings.focus_on_subject.then(|| quantize::detail_weights(src));
+    let hist = Histogram::build_weighted(src, weights.as_deref());
     let selected = match selection {
         Some(sel) => sel.to_vec(),
         None => quantize::select_palette_subset(&hist, palette, settings.color_count, settings.metric),

@@ -94,6 +94,7 @@ fn read_settings(ui: &AppWindow, st: &State) -> Settings {
         },
         curve_smoothing_mm: ui.get_curve_smoothing(),
         smooth_outlines: ui.get_smooth_outlines(),
+        focus_on_subject: ui.get_focus_on_subject(),
     }
 }
 
@@ -113,7 +114,12 @@ fn show_swatches(ui: &AppWindow, palette: &Palette, selected: &[usize], usage: &
                 chart: stencil_core::chart::nearest_code(s.color).into(),
                 active: selected.contains(&i) && used > 0,
                 usage: if used > 0 && total > 0 {
-                    format!("{:.0}%", used as f64 * 100.0 / total as f64).into()
+                    let pct = used as f64 * 100.0 / total as f64;
+                    if pct < 0.5 {
+                        "<1%".into()
+                    } else {
+                        format!("{pct:.0}%").into()
+                    }
                 } else {
                     SharedString::new()
                 },

@@ -104,8 +104,8 @@ pub(crate) fn resolve_islands(
         always_bridge_px,
     } = *rules;
     let (mut bridged, mut dropped) = (0, 0);
-    // A few passes: a bridge may land on another island, which is handled next pass.
-    for _ in 0..4 {
+    // Several passes: a bridge may land on another island, which is handled next pass.
+    for _ in 0..12 {
         let comps = Components::label(mask, w, h);
         if comps.count() == 0 {
             break;

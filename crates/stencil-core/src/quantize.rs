@@ -26,22 +26,29 @@ pub struct Histogram {
 
 impl Histogram {
     pub fn build(img: &RgbImage) -> Self {
-        let mut acc = vec![(0u64, 0u64, 0u64, 0u32); BUCKETS];
-        for p in img.pixels() {
+        Self::build_weighted(img, None)
+    }
+
+    /// Like [`build`](Self::build), but each pixel counts with its own weight (e.g. from
+    /// [`detail_weights`]). Bucket colors are still plain averages.
+    pub fn build_weighted(img: &RgbImage, weights: Option<&[f32]>) -> Self {
+        let mut acc = vec![(0u64, 0u64, 0u64, 0u32, 0f32); BUCKETS];
+        for (i, p) in img.pixels().enumerate() {
             let e = &mut acc[bucket_of(p.0)];
             e.0 += p.0[0] as u64;
             e.1 += p.0[1] as u64;
             e.2 += p.0[2] as u64;
             e.3 += 1;
+            e.4 += weights.map_or(1.0, |w| w[i]);
         }
         let mut bucket_to_sample = vec![u32::MAX; BUCKETS];
         let mut samples = Vec::new();
-        for (i, &(r, g, b, n)) in acc.iter().enumerate() {
+        for (i, &(r, g, b, n, wsum)) in acc.iter().enumerate() {
             if n > 0 {
                 let n64 = n as u64;
                 let mean = Rgb8::new((r / n64) as u8, (g / n64) as u8, (b / n64) as u8);
                 bucket_to_sample[i] = samples.len() as u32;
-                samples.push((mean.to_lab(), n as f32));
+                samples.push((mean.to_lab(), wsum));
             }
         }
         Self {
@@ -53,6 +60,61 @@ impl Histogram {
     fn sample_of(&self, p: [u8; 3]) -> usize {
         self.bucket_to_sample[bucket_of(p)] as usize
     }
+}
+
+/// Per-pixel importance from local detail: sharp, in-focus areas (usually the subject)
+/// weigh up to ~5x more than smooth or out-of-focus areas such as bokeh backgrounds.
+pub fn detail_weights(img: &RgbImage) -> Vec<f32> {
+    let (w, h) = (img.width() as usize, img.height() as usize);
+    if w < 3 || h < 3 {
+        return vec![1.0; w * h];
+    }
+    let lum: Vec<f32> = img
+        .pixels()
+        .map(|p| 0.299 * p.0[0] as f32 + 0.587 * p.0[1] as f32 + 0.114 * p.0[2] as f32)
+        .collect();
+    // gradient magnitude (central differences)
+    let mut g = vec![0f32; w * h];
+    for y in 1..h - 1 {
+        for x in 1..w - 1 {
+            let i = y * w + x;
+            let gx = lum[i + 1] - lum[i - 1];
+            let gy = lum[i + w] - lum[i - w];
+            g[i] = (gx * gx + gy * gy).sqrt();
+        }
+    }
+    // spread detail over its neighbourhood (separable box blur) so whole objects count
+    let r = (w.max(h) / 150).max(2);
+    let blur = |src: &[f32], horizontal: bool| -> Vec<f32> {
+        let mut out = vec![0f32; w * h];
+        let (n, m) = if horizontal { (h, w) } else { (w, h) };
+        for a in 0..n {
+            let at = |b: usize| if horizontal { a * w + b } else { b * w + a };
+            let mut sum = 0f32;
+            let mut cnt = 0f32;
+            for b in 0..m.min(r + 1) {
+                sum += src[at(b)];
+                cnt += 1.0;
+            }
+            for b in 0..m {
+                out[at(b)] = sum / cnt;
+                if b + r + 1 < m {
+                    sum += src[at(b + r + 1)];
+                    cnt += 1.0;
+                }
+                if b >= r {
+                    sum -= src[at(b - r)];
+                    cnt -= 1.0;
+                }
+            }
+        }
+        out
+    };
+    let g = blur(&blur(&g, true), false);
+    let mut sorted: Vec<f32> = g.iter().step_by(7).copied().collect();
+    sorted.sort_by(f32::total_cmp);
+    let p90 = sorted.get(sorted.len() * 9 / 10).copied().unwrap_or(1.0).max(1e-3);
+    g.iter().map(|&v| 0.25 + (v / p90).min(1.0)).collect()
 }
 
 /// Choose the `k` palette colors that best reproduce the image, by minimizing the
@@ -271,6 +333,32 @@ mod tests {
         let names: Vec<&str> = sel.iter().map(|&i| pal.swatches[i].name.as_str()).collect();
         assert!(names.contains(&"Cadmium Red"), "{names:?}");
         assert!(names.iter().any(|n| n.contains("Blue")), "{names:?}");
+    }
+
+    #[test]
+    fn detail_weights_favour_sharp_areas() {
+        // left half: fine checkerboard (detail); right half: flat
+        let img = RgbImage::from_fn(200, 100, |x, y| {
+            if x < 100 && (x / 2 + y / 2) % 2 == 0 {
+                image::Rgb([200, 30, 30])
+            } else {
+                image::Rgb([60, 120, 60])
+            }
+        });
+        let w = detail_weights(&img);
+        let mean = |x0: u32, x1: u32| {
+            let v: Vec<f32> = (10..90)
+                .flat_map(|y| (x0..x1).map(move |x| (y * 200 + x) as usize))
+                .map(|i| w[i])
+                .collect();
+            v.iter().sum::<f32>() / v.len() as f32
+        };
+        assert!(
+            mean(10, 80) > 3.0 * mean(130, 190),
+            "{} vs {}",
+            mean(10, 80),
+            mean(130, 190)
+        );
     }
 
     #[test]

@@ -79,6 +79,7 @@ export component AppWindow inherits Window {
     in-out property <float> min-region: 4.0; // mm²
     in-out property <float> smoothing: 1;
     in-out property <int> metric-index: 0; // 0 = CIEDE2000, 1 = CIE76
+    in-out property <bool> focus-on-subject: true;
     in property <[string]> paper-names;
     in-out property <int> paper-index: 0;
     in-out property <bool> landscape;
@@ -436,6 +437,11 @@ export component AppWindow inherits Window {
                             model: ["CIEDE2000 (accurate)", "CIE76 (fast)"];
                             current-index <=> root.metric-index;
                             selected => { root.settings-changed(); }
+                        }
+                        CheckBox {
+                            text: "Focus on subject";
+                            checked <=> root.focus-on-subject;
+                            toggled => { root.settings-changed(); }
                         }
                     }
                 }

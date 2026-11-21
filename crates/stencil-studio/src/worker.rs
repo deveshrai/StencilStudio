@@ -5,7 +5,7 @@ use slint::{Rgba8Pixel, SharedPixelBuffer};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
-use stencil_core::quantize::{Histogram, auto_palette};
+use stencil_core::quantize::{Histogram, auto_palette, detail_weights};
 use stencil_core::vector::SmoothBoundaries;
 use stencil_core::{Mode, Palette, Rgb8, Settings, process, render};
 
@@ -46,9 +46,13 @@ pub fn spawn(deliver: impl Fn(JobResult) + Send + 'static) -> Sender<Job> {
                     job = newer;
                 }
                 let t0 = Instant::now();
-                let palette = job
-                    .palette
-                    .unwrap_or_else(|| auto_palette(&Histogram::build(&job.image), job.settings.color_count));
+                let palette = job.palette.unwrap_or_else(|| {
+                    let w = job.settings.focus_on_subject.then(|| detail_weights(&job.image));
+                    auto_palette(
+                        &Histogram::build_weighted(&job.image, w.as_deref()),
+                        job.settings.color_count,
+                    )
+                });
                 let r = process(&job.image, &palette, &job.settings);
                 let smooth = job.settings.mode == Mode::Stencil || job.settings.smooth_outlines;
                 let (reduced, outlines) = if smooth {

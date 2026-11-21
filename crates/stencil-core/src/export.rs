@@ -140,7 +140,13 @@ pub fn layer_stl(layer: &StencilLayer, opts: &StencilOptions) -> Vec<u8> {
 
     // Flip to y-up. Outer loops come out counter-clockwise, holes clockwise.
     let flip = |ring: &Vec<Pt>| -> Vec<[f64; 2]> {
-        let mut v: Vec<[f64; 2]> = ring.iter().map(|p| jitter([p[0] as f64, (h - p[1]) as f64])).collect();
+        // Snap to a 1 µm grid first so nearly-coincident points from different rings
+        // become identical (and are then separated as pinches), then jitter.
+        let snap = |v: f64| (v * 1000.0).round() / 1000.0;
+        let mut v: Vec<[f64; 2]> = ring
+            .iter()
+            .map(|p| jitter([snap(p[0] as f64), snap((h - p[1]) as f64)]))
+            .collect();
         v.dedup();
         while v.len() > 1 && v.first() == v.last() {
             v.pop();

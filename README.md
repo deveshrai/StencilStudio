@@ -2,7 +2,7 @@
 
 Turn any photo or illustration into **multi-layer stencils** (hand-cut, laser-cut or 3D-printed) or **paint-by-numbers templates**, using the colors of the paints, pens and pencils you actually own.
 
-![StencilStudio: original photo on the left, 4-color stencil preview on the right](docs/screenshots/stencil-split.png)
+![StencilStudio: a hummingbird photo on the left, its 7-color stencil preview on the right](docs/screenshots/stencil-split.png)
 
 StencilStudio is a native, keyboard-and-mouse-first desktop app with a ribbon, menus and shortcuts. It's written in Rust with [Slint](https://slint.dev). macOS builds are available now; Windows, Linux, Android tablets and iPad are planned.
 
@@ -34,11 +34,14 @@ xattr -dr com.apple.quarantine /Applications/StencilStudio.app
    The preview updates within about 0.1 s.
 5. **Export.** Choose SVG or DXF for laser/vinyl cutters, or STL for 3D printing (`Ctrl+E`).
 
-Colors are matched perceptually (CIELAB / CIEDE2000), not by raw RGB. When you limit the number of colors, StencilStudio picks the subset of *your* palette that best reproduces the image. It gives extra weight to vivid colors, so a red subject stays red rather than turning into a "safe" brown.
+Colors are matched perceptually (CIELAB / CIEDE2000), not by raw RGB. When you limit the number of colors, StencilStudio picks the subset of *your* palette that best reproduces the image. It weighs that choice toward what you'd notice:
+
+- **Vivid colors** count more, so a red subject stays red rather than turning into a "safe" brown.
+- **Sharp, in-focus areas** count more (*Focus on subject*, on by default under **Image → Color Matching**), so a subject in front of a blurry background gets its colors first. In the hummingbird above, this is what keeps the red throat. Without it, the brown bokeh background takes that color slot.
 
 ## Stencil mode
 
-![Cut / outline view of the stencil](docs/screenshots/stencil-outlines.png)
+![Cut / outline view of a portrait stencil](docs/screenshots/stencil-outlines.png)
 
 The **Outlines** view (`Ctrl+3`) shows exactly where the cuts will be. Outlines are true vector curves:
 
@@ -49,7 +52,7 @@ The **Outlines** view (`Ctrl+3`) shows exactly where the cuts will be. Outlines 
 
 ![Four exported stencil layers with bridges and registration holes](docs/screenshots/stencil-layers.png)
 
-*The four layers exported for the image above (gray = sheet material, white = cut away).*
+*The four layers exported from the hummingbird at 4 colors: orange, blue, sienna, black (gray = sheet material, white = cut away).*
 
 **Export** writes one file per color, lightest first, named `<name>-L<n>-<color>.<ext>`:
 
@@ -65,7 +68,7 @@ Every layer gets a **solid frame** (12 mm by default) and **four round registrat
 
 Some cut-outs leave a piece of sheet with nothing holding it, like the center of an "O" or the pupil of an eye. That piece would fall out. StencilStudio decides how to handle each one by its size:
 
-- **Large enough pieces** are held by **two thin bridges on opposite sides**. Each bridge is a straight strip to the nearest solid material; left+right or up+down is chosen, whichever is shorter. In the layers above, the whole balloon is held by two bridges in the sky layer, and the basket by two in the grass layer.
+- **Large enough pieces** are held by **two thin bridges on opposite sides**. Each bridge is a straight strip to the nearest solid material; left+right or up+down is chosen, whichever is shorter. In the black layer above (bottom right), the whole bird would otherwise drop out of the sheet; bridges hold it in place.
 - **Tiny pieces** (below *Drop pieces under*, 6 mm² by default) are dropped, which simply makes that spot part of the paint area.
 - **Mid-size pieces** are also dropped when their bridges would be much longer than the piece itself, instead of being held by long spindly strips. Pieces of 100 mm² or more are always kept.
 
@@ -73,7 +76,7 @@ Bridge width (default 1.2 mm), the drop size and an on/off switch are in **Expor
 
 ## Paint-by-numbers mode
 
-![Paint-by-numbers preview with 6 colors](docs/screenshots/paint-by-numbers.png)
+![Paint-by-numbers preview of a portrait with 8 colors](docs/screenshots/paint-by-numbers.png)
 
 Paint-by-numbers uses the same color engine and minimum-region rules, so every cell is big enough to paint. Outlines can be **smooth vector curves** or **pixel-exact**.
 *(Number placement and the printable PDF packet with a color legend are next on the roadmap.)*
@@ -155,7 +158,8 @@ cargo run -p stencil-core --example calibration_sheet -- sheet.pdf [letter]
 
 - **0.1.0:** engine, app shell, live preview, palettes; smooth vector stencils; SVG/DXF/STL export; scan sheet; macOS build.
 - **0.1.1:** bridges for floating pieces (size-aware drop/bridge), manual color chart + chart codes, README walkthrough.
+- **0.1.2:** *Focus on subject* color selection; STL robustness fixes found on high-res photos; new screenshots.
 - **Next:** manual bridge editing (click to add/remove), on-canvas layer preview, kerf offset, paint-by-numbers numbers + PDF packet, scan-sheet import (with an eyeball-check step), color wheel, crop/contrast/background removal, project files.
 - **Later:** 3MF, paint-mixing suggestions, Windows/Linux packages, Android tablet & iPad builds.
 
-*The sample image in `docs/sample/` is an original illustration made for this project.*
+*Screenshots use royalty-free stock photos, for demonstration only. They are not included in the repository. `docs/sample/balloon.jpg` is an original illustration made for this project that you can use for testing.*

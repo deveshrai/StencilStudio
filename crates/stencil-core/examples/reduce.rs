@@ -58,6 +58,7 @@ fn main() {
         std::fs::write(out.join(format!("{base}.svg")), export::layer_svg(l, &opts)).unwrap();
         std::fs::write(out.join(format!("{base}.dxf")), export::layer_dxf(l, &opts)).unwrap();
         std::fs::write(out.join(format!("{base}.stl")), export::layer_stl(l, &opts)).unwrap();
+        layer_png(l, 4.0).save(out.join(format!("{base}.png"))).unwrap();
         println!(
             "  layer {} {:<16} bridged {:>3} dropped {:>3} left {}",
             l.number,
@@ -67,4 +68,30 @@ fn main() {
             l.island_count()
         );
     }
+}
+
+/// Render a layer's sheet material (dark) with cut-outs (white) at `px_per_mm`.
+fn layer_png(l: &stencil_core::stencil::StencilLayer, px_per_mm: f32) -> image::RgbaImage {
+    let (w, h) = (
+        (l.sheet_mm.0 * px_per_mm).ceil() as u32,
+        (l.sheet_mm.1 * px_per_mm).ceil() as u32,
+    );
+    let mut pm = tiny_skia::Pixmap::new(w, h).unwrap();
+    pm.fill(tiny_skia::Color::WHITE);
+    let mut pb = tiny_skia::PathBuilder::new();
+    for ring in l.cut_paths() {
+        pb.move_to(ring[0][0], ring[0][1]);
+        for p in &ring[1..] {
+            pb.line_to(p[0], p[1]);
+        }
+        pb.close();
+    }
+    if let Some(path) = pb.finish() {
+        let mut paint = tiny_skia::Paint::default();
+        paint.set_color_rgba8(58, 61, 70, 255);
+        paint.anti_alias = true;
+        let tf = tiny_skia::Transform::from_scale(px_per_mm, px_per_mm);
+        pm.fill_path(&path, &paint, tiny_skia::FillRule::EvenOdd, tf, None);
+    }
+    image::RgbaImage::from_raw(w, h, pm.take_demultiplied()).unwrap()
 }
