@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <!-- StencilStudio app icon: an original hummingbird, half "photo" (left), half
+       "stencil" (right), divided by the app's split-view handle. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#23324a"/>
+      <stop offset="1" stop-color="#0f141f"/>
+    </linearGradient>
+    <radialGradient id="bokeh1" cx="0.25" cy="0.25" r="0.5">
+      <stop offset="0" stop-color="#ff9a3c" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#ff9a3c" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="bokeh2" cx="0.3" cy="0.85" r="0.45">
+      <stop offset="0" stop-color="#2fb39a" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#2fb39a" stop-opacity="0"/>
+    </radialGradient>
+    <!-- photo-side materials -->
+    <linearGradient id="pHead" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3fd0c0"/>
+      <stop offset="0.5" stop-color="#2a8fd8"/>
+      <stop offset="1" stop-color="#5a3fc0"/>
+    </linearGradient>
+    <linearGradient id="pThroat" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffb347"/>
+      <stop offset="0.45" stop-color="#f2542d"/>
+      <stop offset="1" stop-color="#b8123a"/>
+    </linearGradient>
+    <linearGradient id="pBody" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2ec4a4"/>
+      <stop offset="0.6" stop-color="#1b7f8c"/>
+      <stop offset="1" stop-color="#14435e"/>
+    </linearGradient>
+    <linearGradient id="pWing" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#8fa6b8" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#e8eef3" stop-opacity="0.55"/>
+    </linearGradient>
+    <linearGradient id="pBeak" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0" stop-color="#3a3f4a"/>
+      <stop offset="1" stop-color="#11141a"/>
+    </linearGradient>
+    <linearGradient id="pBelly" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f6f1e6"/>
+      <stop offset="1" stop-color="#c9d3d6"/>
+    </linearGradient>
+
+    <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="186"/></clipPath>
+    <clipPath id="leftHalf"><rect x="0" y="0" width="512" height="1024"/></clipPath>
+    <clipPath id="rightHalf"><rect x="512" y="0" width="512" height="1024"/></clipPath>
+
+    <!-- Bird geometry (shared by both halves) -->
+    <path id="tail" d="M600 600 C 640 650, 675 705, 712 772 L 684 784 L 664 742 L 652 800 L 622 796 L 618 724 L 596 760 L 572 742 L 586 660 Z"/>
+    <path id="body" d="M440 400 C 500 386, 572 420, 612 482 C 646 534, 656 590, 632 628 C 606 662, 552 640, 508 594 C 466 550, 434 498, 424 452 C 420 428, 426 408, 440 400 Z"/>
+    <path id="belly" d="M432 456 C 446 512, 484 568, 534 610 C 566 636, 600 646, 618 636 C 584 610, 548 572, 516 530 C 488 494, 466 462, 450 432 Z"/>
+    <path id="wing" d="M520 470 C 536 392, 574 300, 640 228 C 690 174, 752 150, 790 160 C 800 196, 782 246, 748 300 C 708 360, 650 420, 590 470 C 566 488, 540 492, 520 470 Z"/>
+    <path id="feather1" d="M560 440 C 600 360, 660 280, 740 210"/>
+    <path id="feather2" d="M590 456 C 640 392, 700 330, 762 270"/>
+    <path id="feather3" d="M545 410 C 575 340, 625 270, 700 205"/>
+    <path id="head" d="M368 372 C 366 326, 402 296, 444 298 C 486 300, 512 334, 506 376 C 500 414, 468 434, 432 434 C 394 434, 370 408, 368 372 Z"/>
+    <path id="throat" d="M376 398 C 396 428, 436 444, 476 434 C 494 428, 506 414, 510 398 C 512 446, 486 482, 446 490 C 408 496, 384 462, 376 398 Z"/>
+    <path id="beak" d="M378 360 L 150 318 L 150 326 L 380 382 Z"/>
+  </defs>
+
+  <g clip-path="url(#tile)">
+    <rect x="100" y="100" width="824" height="824" fill="url(#bg)"/>
+
+    <!-- ===== Left: photo ===== -->
+    <g clip-path="url(#leftHalf)">
+      <rect x="100" y="100" width="824" height="824" fill="url(#bokeh1)"/>
+      <rect x="100" y="100" width="824" height="824" fill="url(#bokeh2)"/>
+      <circle cx="220" cy="560" r="54" fill="#ffd27a" opacity="0.16"/>
+      <circle cx="300" cy="700" r="70" fill="#5fe0c0" opacity="0.10"/>
+      <g transform="translate(78,18)">
+      <use href="#tail" fill="#1d6e7a"/>
+      <use href="#wing" fill="url(#pWing)"/>
+      <g stroke="#ffffff" stroke-opacity="0.45" stroke-width="3" fill="none">
+        <use href="#feather1"/><use href="#feather2"/><use href="#feather3"/>
+      </g>
+      <use href="#body" fill="url(#pBody)"/>
+      <use href="#belly" fill="url(#pBelly)"/>
+      <use href="#head" fill="url(#pHead)"/>
+      <use href="#throat" fill="url(#pThroat)"/>
+      <use href="#beak" fill="url(#pBeak)"/>
+      <circle cx="424" cy="356" r="14" fill="#0b0d12"/>
+      <circle cx="419" cy="351" r="4.5" fill="#ffffff"/>
+      <!-- photo sheen -->
+      <path d="M396 328 C 418 310, 452 306, 480 318" stroke="#ffffff" stroke-opacity="0.5" stroke-width="6" fill="none" stroke-linecap="round"/>
+      </g>
+    </g>
+
+    <!-- ===== Right: stencil (flat, posterized, cut gaps) ===== -->
+    <g clip-path="url(#rightHalf)">
+      <rect x="512" y="100" width="412" height="824" fill="#151b27"/>
+      <circle cx="850" cy="610" r="64" fill="#f39c3a"/>
+      <circle cx="600" cy="880" r="120" fill="#1d5f5a"/>
+      <g transform="translate(78,18)">
+      <g stroke="#151b27" stroke-width="9" stroke-linejoin="round">
+        <use href="#tail" fill="#1f8a8a"/>
+        <use href="#wing" fill="#d9e2e8"/>
+        <use href="#body" fill="#1f8a8a"/>
+        <use href="#belly" fill="#f4efe3"/>
+        <use href="#head" fill="#2a8fd8"/>
+        <use href="#throat" fill="#e8402a"/>
+        <use href="#beak" fill="#0d1118" stroke="none"/>
+      </g>
+      <circle cx="424" cy="356" r="15" fill="#0d1118"/>
+      <!-- stencil feather cuts with bridges -->
+      <g stroke="#151b27" stroke-width="9" stroke-linecap="round" fill="none">
+        <use href="#feather1"/><use href="#feather2"/><use href="#feather3"/>
+      </g>
+      </g>
+    </g>
+
+    <!-- ===== Split handle (as in the app) ===== -->
+    <rect x="507" y="100" width="10" height="824" fill="#ffffff"/>
+    <rect x="490" y="690" width="44" height="120" rx="22" fill="#ffffff"/>
+    <rect x="503" y="720" width="4" height="60" rx="2" fill="#9aa3b2"/>
+    <rect x="517" y="720" width="4" height="60" rx="2" fill="#9aa3b2"/>
+  </g>
+</svg>

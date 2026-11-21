@@ -1,3 +1,5 @@
+<img src="docs/icon.png" width="112" align="right" alt="StencilStudio icon">
+
 # StencilStudio
 
 Turn any photo or illustration into **multi-layer stencils** (hand-cut, laser-cut or 3D-printed) or **paint-by-numbers templates**, using the colors of the paints, pens and pencils you actually own.

@@ -17,16 +17,8 @@ lipo -create -output "$APP/Contents/MacOS/StencilStudio" \
   target/aarch64-apple-darwin/release/stencil-studio \
   target/x86_64-apple-darwin/release/stencil-studio
 
-# Icon: render the SVG with Quick Look, then build an .icns.
-ICONSET=$(mktemp -d)/AppIcon.iconset
-mkdir -p "$ICONSET"
-qlmanage -t -s 1024 -o "$(dirname "$ICONSET")" packaging/macos/AppIcon.svg >/dev/null 2>&1
-SRC="$(dirname "$ICONSET")/AppIcon.svg.png"
-for s in 16 32 128 256 512; do
-  sips -z $s $s "$SRC" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
-  sips -z $((s*2)) $((s*2)) "$SRC" --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
-done
-iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
+# Icon (generated from packaging/icon/hummingbird-split.svg by scripts/make-icons.py)
+cp packaging/macos/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 sed "s/__VERSION__/$VERSION/g" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
 
