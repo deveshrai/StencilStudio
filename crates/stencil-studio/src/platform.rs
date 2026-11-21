@@ -11,6 +11,16 @@ use std::path::{Path, PathBuf};
 pub enum PickKind {
     Image,
     Palette,
+    /// Photo, scan or scanner-app PDF of the filled-in calibration sheet.
+    Scan,
+}
+
+/// Where the Android system picker takes the file from.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PickSource {
+    Photos,
+    Files,
+    Camera,
 }
 
 impl PickKind {
@@ -18,12 +28,14 @@ impl PickKind {
         match self {
             PickKind::Image => &["jpg", "jpeg", "png", "webp"],
             PickKind::Palette => &["json"],
+            PickKind::Scan => &["jpg", "jpeg", "png", "webp", "pdf"],
         }
     }
     pub fn title(self) -> &'static str {
         match self {
             PickKind::Image => "Open Image",
             PickKind::Palette => "Load Palette",
+            PickKind::Scan => "Import Calibration Scan",
         }
     }
 }
@@ -39,6 +51,7 @@ mod imp {
         let filter = match kind {
             PickKind::Image => "Images",
             PickKind::Palette => "Palette",
+            PickKind::Scan => "Photo, scan or PDF",
         };
         rfd::FileDialog::new()
             .set_title(kind.title())
@@ -78,8 +91,15 @@ mod imp {
         true
     }
 
-    pub fn system_pick(_kind: PickKind, _gallery: bool) -> bool {
+    pub fn system_pick(_kind: PickKind, _source: PickSource) -> bool {
         false
+    }
+
+    /// Nothing to do on desktop: the user chose where the file went.
+    pub fn open_file(_path: &Path, _mime: &str) {}
+
+    pub fn temp_dir() -> PathBuf {
+        std::env::temp_dir()
     }
 
     pub fn poll_system_pick() -> Option<Option<PathBuf>> {
@@ -127,14 +147,56 @@ mod imp {
         // Shown in-app by the caller (see `lib.rs::show_message`).
     }
 
+    /// App-private scratch space (`std::env::temp_dir()` is not writable for apps).
+    pub fn temp_dir() -> PathBuf {
+        let d = APP
+            .get()
+            .and_then(|a| a.internal_data_path())
+            .unwrap_or_else(std::env::temp_dir)
+            .join("tmp");
+        let _ = std::fs::create_dir_all(&d);
+        d
+    }
+
+    /// The Android print dialog (any printer, or "Save as PDF").
     pub fn print_pdf(pdf: &Path) -> Result<String, String> {
-        let dest = save_path("", "", "pdf", &pdf.file_name().unwrap_or_default().to_string_lossy())
-            .ok_or("no output folder")?;
-        std::fs::copy(pdf, &dest).map_err(|e| e.to_string())?;
-        Ok(format!(
-            "Saved to {} — open it in the Files app to print",
-            display(&dest)
-        ))
+        use jni::objects::JValue;
+        let job = pdf
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "StencilStudio".into());
+        with_class("io.github.deveshrai.stencilstudio.Platform", |env, activity, class| {
+            let path = env.new_string(pdf.to_string_lossy())?;
+            let job = env.new_string(&job)?;
+            env.call_static_method(
+                class,
+                "printPdf",
+                "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)V",
+                &[JValue::Object(activity), JValue::Object(&path), JValue::Object(&job)],
+            )?;
+            Ok(())
+        })
+        .map_err(|e| e.to_string())?;
+        Ok("Opened the print dialog".into())
+    }
+
+    /// Open a file we saved in a viewer app (e.g. a PDF).
+    pub fn open_file(path: &Path, mime: &str) {
+        use jni::objects::JValue;
+        let r = with_class("io.github.deveshrai.stencilstudio.Platform", |env, activity, class| {
+            let p = env.new_string(path.to_string_lossy())?;
+            let m = env.new_string(mime)?;
+            env.call_static_method(
+                class,
+                "openFile",
+                "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)V",
+                &[JValue::Object(activity), JValue::Object(&p), JValue::Object(&m)],
+            )?;
+            Ok(())
+        });
+        if let Err(e) = r {
+            log::warn!("open file failed: {e}");
+        }
     }
 
     /// Shorten /storage/emulated/0/... to something people recognise.
@@ -153,7 +215,7 @@ mod imp {
     /// Image / palette files in the usual shared folders, newest first.
     pub fn list_files(kind: PickKind) -> Vec<PathBuf> {
         let roots: &[&str] = match kind {
-            PickKind::Image => &["Pictures", "DCIM", "Download", "Documents"],
+            PickKind::Image | PickKind::Scan => &["Pictures", "DCIM", "Download", "Documents"],
             PickKind::Palette => &["Documents", "Download"],
         };
         let exts = kind.extensions();
@@ -182,6 +244,11 @@ mod imp {
         for r in roots {
             walk(&Path::new(STORAGE).join(r), 3, exts, &mut out);
         }
+        if kind == PickKind::Scan {
+            // our own exports (charts, sheets) are never the scan
+            let own = Path::new(STORAGE).join("Documents").join("StencilStudio");
+            out.retain(|p| !p.starts_with(&own));
+        }
         out.sort_by_key(|p| std::cmp::Reverse(std::fs::metadata(p).and_then(|m| m.modified()).ok()));
         out.dedup();
         out
@@ -198,8 +265,15 @@ mod imp {
         }
     }
 
-    /// Run `f` with a JNI env, the activity and our `PickerActivity` class.
     fn with_picker<R>(
+        f: impl FnOnce(&mut jni::JNIEnv, &jni::objects::JObject, &jni::objects::JClass) -> jni::errors::Result<R>,
+    ) -> jni::errors::Result<R> {
+        with_class("io.github.deveshrai.stencilstudio.PickerActivity", f)
+    }
+
+    /// Run `f` with a JNI env, the activity and one of our Java classes.
+    fn with_class<R>(
+        class_name: &str,
         f: impl FnOnce(&mut jni::JNIEnv, &jni::objects::JObject, &jni::objects::JClass) -> jni::errors::Result<R>,
     ) -> jni::errors::Result<R> {
         use jni::objects::{JClass, JObject, JValue};
@@ -211,7 +285,7 @@ mod imp {
         let loader = env
             .call_method(&activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
             .l()?;
-        let name = env.new_string("io.github.deveshrai.stencilstudio.PickerActivity")?;
+        let name = env.new_string(class_name)?;
         let class = env
             .call_method(
                 &loader,
@@ -231,14 +305,19 @@ mod imp {
 
     /// Show the system Photo Picker (`gallery`) or the Files app. Poll the outcome with
     /// [`poll_system_pick`].
-    pub fn system_pick(kind: PickKind, gallery: bool) -> bool {
+    pub fn system_pick(kind: PickKind, source: PickSource) -> bool {
         use jni::objects::JValue;
         let mime = match kind {
             PickKind::Image => "image/*",
             PickKind::Palette => "*/*", // .json has no reliable MIME type on Android
+            PickKind::Scan => "image/*,application/pdf",
         };
         let r = with_picker(|env, activity, class| {
-            let mode = env.new_string(if gallery { "gallery" } else { "files" })?;
+            let mode = env.new_string(match source {
+                PickSource::Photos => "gallery",
+                PickSource::Files => "files",
+                PickSource::Camera => "camera",
+            })?;
             let mime = env.new_string(mime)?;
             env.call_static_method(
                 class,

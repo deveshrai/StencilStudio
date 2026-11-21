@@ -16,9 +16,17 @@ path = "src/main.rs"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 slint = "1.19"
 stencil-core = { version = "0.1.0", path = "../stencil-core" }
+tract-onnx = "0.23"
 
 [target.'cfg(not(target_os = "android"))'.dependencies]
 rfd = "0.18"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Subject detection via Apple Vision (VNGenerateForegroundInstanceMaskRequest, macOS 14+)
+objc2 = "0.6"
+objc2-foundation = "0.3.2"
+objc2-core-video = "0.3.2"
+objc2-vision = { version = "0.3.2", features = ["objc2-core-video", "objc2-image-io"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 slint = { version = "1.19", features = ["backend-android-activity-06"] }

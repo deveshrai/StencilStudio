@@ -49,6 +49,15 @@ component BgSwatch inherits Rectangle {
     }
 }
 
+export struct ScanRow {
+    number: int,
+    name: string,
+    has-old: bool,
+    old-color: color,
+    new-color: color,
+    hex: string,
+}
+
 export struct SwatchItem {
     color: color,
     name: string,
@@ -167,8 +176,24 @@ export component AppWindow inherits Window {
     in property <[PickerItem]> picker-items;
     callback picker-chosen(int);
     callback picker-refresh();
-    callback picker-system(bool); // true = Photo Picker (gallery), false = Files app
+    callback picker-system(int); // 0 = Photo Picker, 1 = Files app, 2 = camera
     in property <bool> picker-allows-gallery: true;
+    in property <bool> picker-allows-camera: true;
+
+    // Calibration scan import
+    callback import-scan();
+    in-out property <bool> confirm-visible;
+    in property <string> confirm-title;
+    in property <string> confirm-text;
+    in property <string> confirm-ok-text: "OK";
+    in property <string> confirm-alt-text;
+    callback confirm-ok();
+    callback confirm-alt();
+    in-out property <bool> scan-visible;
+    in property <string> scan-summary;
+    in property <[ScanRow]> scan-rows;
+    callback scan-apply();
+    callback scan-cancel();
 
     // ---- Stencil layers view (view-mode 4) ----
     in property <[LayerChip]> layer-chips;
@@ -312,6 +337,8 @@ export component AppWindow inherits Window {
                 MenuSeparator { }
                 MenuItem { title: "Print Scan Sheet…"; activated => { root.print-calibration-sheet(); } }
                 MenuItem { title: "Save Scan Sheet PDF…"; activated => { root.save-calibration-sheet(); } }
+                MenuSeparator { }
+                MenuItem { title: "Import Scan…"; activated => { root.import-scan(); } }
                 MenuItem { title: "Import Filled Scan Sheet…"; enabled: false; }
             }
             MenuSeparator { }
@@ -686,7 +713,7 @@ export component AppWindow inherits Window {
                     RibbonButton { icon: @image-url("icons/pdf.svg"); text: "Chart PDF"; tooltip: "Save the manual color chart as a PDF"; clicked => { root.save-color-chart(); } }
                     RibbonButton { icon: @image-url("icons/print.svg"); text: "Scan Sheet"; tooltip: "Print the scan sheet (fill in, photograph, import)"; clicked => { root.print-calibration-sheet(); } }
                     RibbonButton { icon: @image-url("icons/pdf.svg"); text: "Scan PDF"; tooltip: "Save the scan sheet as a PDF"; clicked => { root.save-calibration-sheet(); } }
-                    RibbonButton { icon: @image-url("icons/scan.svg"); text: "Import Scan"; enabled: false; tooltip: "Read colors from a photo/scan of the filled sheet (coming soon). Do one eyeball check with the Color Chart first."; }
+                    RibbonButton { icon: @image-url("icons/scan.svg"); text: "Import Scan"; tooltip: "Read your paint colours from a photo, scan or PDF of the filled-in scan sheet. Do one eyeball check with the Color Chart first."; clicked => { root.import-scan(); } }
                 }
             }
 
@@ -1414,16 +1441,21 @@ export component AppWindow inherits Window {
                 }
                 HorizontalLayout {
                     spacing: 8px;
+                    if root.picker-allows-camera: Button {
+                        text: "Camera…";
+                        horizontal-stretch: 1;
+                        clicked => { root.picker-system(2); }
+                    }
                     if root.picker-allows-gallery: Button {
                         text: "Photos…";
                         primary: true;
                         horizontal-stretch: 1;
-                        clicked => { root.picker-system(true); }
+                        clicked => { root.picker-system(0); }
                     }
                     Button {
                         text: "Browse Files…";
                         horizontal-stretch: 1;
-                        clicked => { root.picker-system(false); }
+                        clicked => { root.picker-system(1); }
                     }
                 }
                 Text {
@@ -1479,6 +1511,99 @@ export component AppWindow inherits Window {
                 HorizontalLayout {
                     alignment: end;
                     Button { text: "OK"; primary: true; clicked => { root.alert-visible = false; } }
+                }
+            }
+        }
+    }
+
+    // ================= Two-choice prompt =================
+    if root.confirm-visible: Rectangle {
+        background: #000000a8;
+        TouchArea { clicked => { root.confirm-visible = false; } }
+        Rectangle {
+            width: min(parent.width - 32px, 560px);
+            height: min(parent.height - 48px, confirm-layout.preferred-height);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Theme.panel;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: Theme.border;
+            TouchArea { }
+            confirm-layout := VerticalLayout {
+                padding: 18px;
+                spacing: 12px;
+                Text { text: root.confirm-title; color: Theme.text; font-size: 17px; font-weight: 600; }
+                Text { text: root.confirm-text; color: Theme.text-dim; wrap: word-wrap; }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    Button { text: "Cancel"; clicked => { root.confirm-visible = false; } }
+                    if root.confirm-alt-text != "": Button { text: root.confirm-alt-text; clicked => { root.confirm-alt(); } }
+                    Button { text: root.confirm-ok-text; primary: true; clicked => { root.confirm-ok(); } }
+                }
+            }
+        }
+    }
+
+    // ================= Scan import review =================
+    if root.scan-visible: Rectangle {
+        background: #000000a8;
+        TouchArea { }
+        Rectangle {
+            width: min(parent.width - 32px, 620px);
+            height: min(parent.height - 48px, 640px);
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: Theme.panel;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: Theme.border;
+            VerticalLayout {
+                padding: 18px;
+                spacing: 10px;
+                Text { text: "Colours from your calibration sheet"; color: Theme.text; font-size: 17px; font-weight: 600; }
+                Text { text: root.scan-summary; color: Theme.text-dim; wrap: word-wrap; font-size: Theme.font-normal; }
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 8px;
+                    spacing: 10px;
+                    Text { text: "Box"; width: 34px; color: Theme.text-faint; font-size: Theme.font-small; }
+                    Text { text: "Colour"; horizontal-stretch: 1; color: Theme.text-faint; font-size: Theme.font-small; }
+                    Text { text: "Was"; width: 40px; color: Theme.text-faint; font-size: Theme.font-small; horizontal-alignment: center; }
+                    Text { text: "Read"; width: 40px; color: Theme.text-faint; font-size: Theme.font-small; horizontal-alignment: center; }
+                    Text { text: ""; width: 66px; }
+                }
+                ListView {
+                    vertical-stretch: 1;
+                    for r in root.scan-rows: HorizontalLayout {
+                        height: 44px;
+                        padding-left: 8px;
+                        padding-right: 8px;
+                        spacing: 10px;
+                        Text { text: r.number; width: 34px; color: Theme.text-dim; vertical-alignment: center; }
+                        Text { text: r.name; horizontal-stretch: 1; color: Theme.text; vertical-alignment: center; overflow: elide; }
+                        Rectangle {
+                            width: 40px;
+                            Rectangle {
+                                width: 32px; height: 28px; border-radius: 4px;
+                                background: r.has-old ? r.old-color : transparent;
+                                border-width: 1px; border-color: Theme.border;
+                            }
+                            if !r.has-old: Text { text: "new"; color: Theme.text-faint; font-size: 10px; }
+                        }
+                        Rectangle {
+                            width: 40px;
+                            Rectangle { width: 32px; height: 28px; border-radius: 4px; background: r.new-color; border-width: 1px; border-color: Theme.border; }
+                        }
+                        Text { text: r.hex; width: 66px; color: Theme.text-dim; vertical-alignment: center; font-size: Theme.font-small; }
+                    }
+                }
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 8px;
+                    Button { text: "Cancel"; clicked => { root.scan-cancel(); } }
+                    Button { text: "Apply Colours"; primary: true; clicked => { root.scan-apply(); } }
                 }
             }
         }

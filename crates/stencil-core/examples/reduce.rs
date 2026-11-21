@@ -106,12 +106,20 @@ fn manifold(stl: &[u8]) -> bool {
     for i in 0..n {
         let base = 84 + i * 50 + 12;
         let p = |v: usize| {
-            let f = |k: usize| u32::from_le_bytes(stl[base + (v * 3 + k) * 4..base + (v * 3 + k) * 4 + 4].try_into().unwrap());
+            let f = |k: usize| {
+                u32::from_le_bytes(
+                    stl[base + (v * 3 + k) * 4..base + (v * 3 + k) * 4 + 4]
+                        .try_into()
+                        .unwrap(),
+                )
+            };
             (f(0), f(1), f(2))
         };
         for v in 0..3 {
             *edges.entry((p(v), p((v + 1) % 3))).or_default() += 1;
         }
     }
-    edges.iter().all(|((a, b), c)| *c == 1 && edges.get(&(*b, *a)) == Some(&1))
+    edges
+        .iter()
+        .all(|((a, b), c)| *c == 1 && edges.get(&(*b, *a)) == Some(&1))
 }

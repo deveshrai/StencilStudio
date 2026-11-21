@@ -25,8 +25,8 @@ xattr -dr com.apple.quarantine /Applications/StencilStudio.app
 
 StencilStudio also runs on Android tablets and foldables (Android 10+, arm64). It has the same ribbon UI with touch on top: two-finger pinch to zoom, drag to pan, and keyboard shortcuts when a keyboard is attached. It has been tested on a Galaxy Z Fold and a Pixel Tablet emulator. Differences from desktop:
 
-- **Open Image** offers the system **Photos** picker (no permission needed), **Browse Files…** (the Files app, including Drive and other providers), or a quick list of recent images in Pictures, DCIM, Download and Documents. Android asks for photo access the first time you use that list.
-- Exports and calibration PDFs are saved to **Documents/StencilStudio**, where you can open them in the Files app (and print from there).
+- **Open Image** and **Import Scan** offer **Camera…**, the system **Photos** picker (no permission needed), **Browse Files…** (the Files app, including Drive and other providers), and a quick list of recent images in Pictures, DCIM, Download and Documents. Android asks for photo access the first time you use that list.
+- **Printing** opens the Android print dialog (any printer, or *Save as PDF*). **Saving** a chart or sheet stores it in **Documents/StencilStudio** and opens it in your PDF viewer. Stencil exports go to the same folder.
 - The desktop menu bar is hidden; everything is in the ribbon. On narrow screens, use the ‹ › buttons to scroll the ribbon.
 
 To build: `scripts/build-android.sh --install <adb-serial>`. This needs the Android SDK with **NDK 30+** and **build-tools 37+**, plus `cargo install cargo-apk2` and `rustup target add aarch64-linux-android`. The APK is signed with your local debug key for sideloading.
@@ -62,7 +62,13 @@ Colors are matched perceptually (CIELAB / CIEDE2000), not by raw RGB. When you l
 - **The background is one flat area.** It never becomes a stencil layer, and it's left as a single region in paint-by-numbers. Paint it in your chosen colour first, or leave the surface bare.
 - **Pick the preview background:** **White**, **Black**, one of three **recommended** paints from your palette (chosen to stand out against the subject's main colours), or **Custom** (hue/saturation/lightness sliders or a hex code).
 
-It works without an AI model. It's a GrabCut-style colour-model segmentation that uses the image border, sharpness and centre as cues. It works best when the subject is in focus against a softer or plainer background, such as wildlife or portraits with bokeh. A busy background close to the subject's colours (for example, a beige coat against sunlit blossom) can leave patches behind. Turn it off for those for now; a brush to correct the mask is planned.
+Subject detection uses the best that's available on your device, and the status bar shows which one was used:
+
+- **macOS 14+: Apple Vision.** This is the same subject lifting as Photos and Preview (`VNGenerateForegroundInstanceMaskRequest`).
+- **Android, Windows, Linux and older macOS:** a bundled on-device network, [U²-Net-p](https://github.com/xuebinqin/U-2-Net) (4.6 MB, Apache-2.0), run on the CPU with [tract](https://github.com/sonos/tract). It takes about 0.5 s on a laptop and about 1 s on a tablet, once per photo.
+- **Fallback:** a colour-model segmentation that needs no model.
+
+Either way, the detector's soft mask is snapped to the photo's real edges at full resolution, and exports use the same detection at export resolution. Nothing leaves the device. If the detector treats something in front of the subject as part of it (a branch held in front of a face, for example), a brush to correct the mask is planned.
 
 ## Stencil mode
 
@@ -134,7 +140,24 @@ Paint on paper never looks quite like it does on screen, so StencilStudio offers
 The palette list shows each color's nearest chart code, so you can also check existing colors at a glance. You match against the *printout*, not the screen, which removes most of the screen-vs-printer mismatch.
 
 **Scan Sheet**, which you fill in, photograph and import:
-24 boxes surrounded by corner markers and a gray reference strip, designed for automatic reading from a phone photo. *(The importer is in progress.)* Even with the scan sheet, we recommend one eyeball check against the manual chart before importing. It catches lighting and camera white-balance errors.
+
+1. Print it (**Scan Sheet**), fill each box with one paint, and let it dry. Boxes are numbered in the same order as your palette.
+2. **Do one eyeball check first:** compare 2–3 paints against the Manual Color Chart in daylight. The app reminds you once per session. Cameras and scanners shift colour with the light, and this one check catches it.
+3. **Import Scan** (Palette tab, or File → Calibration). You can use:
+   - a photo (JPG, PNG or WebP);
+   - a scanner's or scanner app's **PDF**;
+   - on Android, the **camera** directly.
+4. Review the result. Each box's colour is shown next to the palette colour it will replace; then choose **Apply Colours**.
+
+![Reviewing colours read from a scanned calibration sheet on Android](docs/screenshots/scan-import.png)
+
+How the reader works:
+
+- **Corner markers:** it finds the four markers by shape. The hollow one marks the bottom-right corner, so a rotated or upside-down photo is fine.
+- **Perspective and paper:** it corrects perspective and tells A4 from US Letter by itself.
+- **Colour:** it uses the printed gray strip to remove colour casts and exposure errors.
+
+In tests with a warm cast and a 90° rotation, colours came back within 1–2 RGB levels. White and very pale paints can't be told apart from the paper, so they're reported as empty; set those by hand. With the *Auto* palette selected, the scanned colours become a new palette, "Scanned paints".
 
 ## Keyboard shortcuts
 
@@ -173,8 +196,10 @@ Developer tools:
 ```sh
 # Full pipeline without the UI: previews + per-layer SVG/DXF/STL
 cargo run -p stencil-core --release --example reduce -- in.jpg 4 out_dir/ [palette.json]
-# Background-removal mask preview (removed area in magenta)
-cargo run -p stencil-core --release --example bgmask -- in.jpg mask.png
+# Background-removal preview (removed area in magenta); add `model` to skip Apple Vision
+cargo run -p stencil-studio --release --example subject -- in.jpg cutout.png [model]
+# Read a photographed / scanned / PDF calibration sheet
+cargo run -p stencil-core --release --example scan_read -- sheet.jpg
 # Re-trace the logo and regenerate every app icon (macOS)
 python3 scripts/make-icons.py
 # Calibration PDFs
@@ -192,7 +217,7 @@ cargo run -p stencil-core --example calibration_sheet -- sheet.pdf [letter]
 1. The image is downscaled to ≤1600 px for the live preview (≤3000 px for export) and optionally pre-blurred.
 2. A 5-bit-per-channel histogram is converted to CIELAB.
 3. **Palette selection** picks the *k* colors from your palette that minimize the pixel-weighted CIEDE2000 error (greedy + swap refinement), with chroma-weighted saliency. *Auto* mode runs weighted k-means++ instead.
-4. With **Remove background**, a subject mask is estimated first (see above); background pixels are left out of the histogram and become one extra "Background" region that is never a layer.
+4. With **Remove background**, a subject mask is estimated first (Apple Vision or U²-Net-p, edge-refined with colour models; see above); background pixels are left out of the histogram and become one extra "Background" region that is never a layer.
 5. Pixels are mapped to the chosen colors and labeled into 4-connected regions. Regions smaller than the minimum size (mm² at print size) merge into the neighbor they share the longest border with.
 6. **Vectorization:** region borders are split into chains between junctions. Each chain is Gaussian-smoothed once with its ends pinned, so every outline built from them shares identical edges.
 7. **Stencil sheets:** for each color, solid material = frame + every other color. Floating pieces are bridged or dropped on a pixel mask; the smooth outlines are then merged with the bridges using a robust polygon union (i_overlay), which also removes any self-intersections.
@@ -207,8 +232,9 @@ cargo run -p stencil-core --example calibration_sheet -- sheet.pdf [letter]
 - **0.1.2:** *Focus on subject* color selection; STL robustness fixes found on high-res photos; new screenshots.
 - **0.1.4:** Layers view with click-to-add/remove bridges and undo; new puppy app icon.
 - **0.1.5:** Remove background (white / black / recommended / custom preview colour); hummingbird app icon traced to clean vectors and a startup animation; Android system Photos and Files pickers.
-- **Next:** kerf offset, paint-by-numbers numbers + PDF packet, scan-sheet import (with an eyeball-check step), color wheel, crop/contrast, a brush to fix the background mask, project files.
+- **0.1.6:** subject detection via Apple Vision (macOS) and a bundled on-device model (Android and others); calibration scan import from a photo, PDF or the Android camera; Android print dialog, and saved PDFs open in a viewer.
+- **Next:** kerf offset, paint-by-numbers numbers + PDF packet, color wheel, crop/contrast, a brush to fix the background mask, project files.
 - **Android preview:** same app on tablets/foldables; in-app image browser, pinch-zoom, touch-friendly ribbon.
-- **Later:** Android share/print intents, 3MF, paint-mixing suggestions, Windows/Linux packages, iPad build.
+- **Later:** iPad build (Apple Vision subject lifting, camera, document scanner), Android share intents, 3MF, paint-mixing suggestions, Windows/Linux packages, iPad build.
 
 *Screenshots use royalty-free stock photos, for demonstration only. They are not included in the repository. `docs/sample/balloon.jpg` is an original illustration made for this project that you can use for testing.*

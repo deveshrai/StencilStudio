@@ -12,10 +12,12 @@ mod islands;
 pub mod palette;
 pub mod paper;
 pub mod pdf;
+pub mod pdf_image;
 pub mod pipeline;
 pub mod quantize;
 pub mod regions;
 pub mod render;
+pub mod scan;
 pub mod stencil;
 pub mod vector;
 

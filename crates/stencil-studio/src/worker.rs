@@ -57,6 +57,8 @@ pub struct JobResult {
     pub recommended: Vec<Rgb8>,
     /// Background colour this result was rendered with.
     pub background_color: Rgb8,
+    /// Which subject detector made the cut-out.
+    pub subject_source: Option<crate::subject::Source>,
     pub elapsed: Duration,
 }
 
@@ -71,18 +73,24 @@ pub fn spawn(deliver: impl Fn(JobResult) + Send + 'static) -> Sender<Job> {
         .name("stencil-worker".into())
         .spawn(move || {
             // The subject mask only depends on the image, so keep it while sliders move.
-            let mut mask_cache: Option<(Arc<image::RgbImage>, Arc<Vec<bool>>)> = None;
+            let mut mask_cache: Option<(Arc<image::RgbImage>, Arc<Vec<bool>>, crate::subject::Source)> = None;
             while let Ok(mut job) = rx.recv() {
                 // Coalesce: skip to the newest pending request.
                 while let Ok(newer) = rx.try_recv() {
                     job = newer;
                 }
                 let t0 = Instant::now();
+                let mut subject_source = None;
                 let mask = job.settings.remove_background.then(|| match &mask_cache {
-                    Some((img, m)) if Arc::ptr_eq(img, &job.image) => m.clone(),
+                    Some((img, m, src)) if Arc::ptr_eq(img, &job.image) => {
+                        subject_source = Some(*src);
+                        m.clone()
+                    }
                     _ => {
-                        let m = Arc::new(background::foreground_mask(&job.image));
-                        mask_cache = Some((job.image.clone(), m.clone()));
+                        let (m, src) = crate::subject::foreground_mask(&job.image);
+                        let m = Arc::new(m);
+                        subject_source = Some(src);
+                        mask_cache = Some((job.image.clone(), m.clone(), src));
                         m
                     }
                 });
@@ -189,6 +197,7 @@ pub fn spawn(deliver: impl Fn(JobResult) + Send + 'static) -> Sender<Job> {
                     background_share,
                     recommended,
                     background_color: job.settings.background_color,
+                    subject_source,
                     palette,
                     reduced,
                     outlines,

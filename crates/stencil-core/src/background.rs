@@ -127,8 +127,77 @@ pub fn foreground_mask(img: &RgbImage) -> Vec<bool> {
         }
     }
     // the edge pass can leave pixel-sized specks and pinholes: tidy them up
-    let (wu, hu) = (w as usize, h as usize);
-    let comps = components(&out, wu, hu);
+    tidy(&mut out, w as usize, h as usize);
+    out
+}
+
+/// Turn a soft subject probability map (`prob`, `pw`×`ph`, values 0..1, any resolution)
+/// from a subject detector into a full-resolution cut-out for `img`.
+///
+/// Confident areas keep the detector's answer; along the uncertain edge band each pixel
+/// is re-decided partly by its own colour (subject vs background colour models learned
+/// from the confident areas), then specks and pinholes are tidied up. Returns `None` if
+/// the map contains no clear subject.
+pub fn mask_from_probability(img: &RgbImage, prob: &[f32], pw: u32, ph: u32) -> Option<Vec<bool>> {
+    let (w, h) = img.dimensions();
+    if prob.len() != (pw * ph) as usize || pw < 2 || ph < 2 || w < 2 || h < 2 {
+        return None;
+    }
+    let confident_fg = prob.iter().filter(|&&p| p > 0.5).count();
+    if confident_fg * 300 < prob.len() {
+        return None; // < 0.3 % subject: nothing found
+    }
+    let sample = |_p: f32, xs: f32, ys: f32| -> f32 {
+        let fx = (xs * pw as f32 - 0.5).clamp(0.0, pw as f32 - 1.0);
+        let fy = (ys * ph as f32 - 0.5).clamp(0.0, ph as f32 - 1.0);
+        let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
+        let (x1, y1) = ((x0 + 1).min(pw as usize - 1), (y0 + 1).min(ph as usize - 1));
+        let (tx, ty) = (fx.fract(), fy.fract());
+        let at = |x: usize, y: usize| prob[y * pw as usize + x];
+        (at(x0, y0) * (1.0 - tx) + at(x1, y0) * tx) * (1.0 - ty) + (at(x0, y1) * (1.0 - tx) + at(x1, y1) * tx) * ty
+    };
+
+    // colour models from the confident parts, sampled on a coarse grid
+    let raw = img.as_raw();
+    let step = ((w * h) as f32 / 60_000.0).sqrt().max(1.0) as u32;
+    let (mut f, mut b) = (Vec::new(), Vec::new());
+    for y in (0..h).step_by(step as usize) {
+        for x in (0..w).step_by(step as usize) {
+            let p = sample(0.0, (x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
+            let i = ((y * w + x) * 3) as usize;
+            let c = lab3(Rgb8::new(raw[i], raw[i + 1], raw[i + 2]));
+            if p > 0.85 {
+                f.push(c);
+            } else if p < 0.15 {
+                b.push(c);
+            }
+        }
+    }
+    let models = (f.len() >= 16 && b.len() >= 16).then(|| (kmeans(&f, K), kmeans(&b, K)));
+
+    let mut out = vec![false; (w * h) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let v = sample(0.0, (x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32) - 0.5;
+            let i = (y * w + x) as usize;
+            let edge = 1.0 - (v.abs() / 0.3).min(1.0);
+            let v = match &models {
+                Some((fm, bm)) if edge > 0.0 => {
+                    let p = lab3(Rgb8::new(raw[i * 3], raw[i * 3 + 1], raw[i * 3 + 2]));
+                    v + edge * 0.3 * colour_score(fm, bm, p)
+                }
+                _ => v,
+            };
+            out[i] = v > 0.0;
+        }
+    }
+    tidy(&mut out, w as usize, h as usize);
+    Some(out)
+}
+
+/// Drop subject specks much smaller than the main subject and fill small pinholes.
+fn tidy(out: &mut [bool], w: usize, h: usize) {
+    let comps = components(out, w, h);
     let largest = comps
         .iter()
         .filter(|c| c.value)
@@ -144,7 +213,6 @@ pub fn foreground_mask(img: &RgbImage) -> Vec<bool> {
             }
         }
     }
-    out
 }
 
 /// Background colours that set the subject off well: paints from `palette` ranked by how

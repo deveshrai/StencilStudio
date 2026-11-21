@@ -1,7 +1,7 @@
 //! High-resolution stencil export, run on its own thread.
 
 use std::path::{Path, PathBuf};
-use stencil_core::pipeline::{fit_within, process_with_selection};
+use stencil_core::pipeline::{fit_within, process_masked};
 use stencil_core::stencil::{StencilOptions, build_layers};
 use stencil_core::vector::SmoothBoundaries;
 use stencil_core::{Palette, Settings, export};
@@ -83,7 +83,11 @@ pub fn layer_path(target: &Path, number: usize, color: &str, ext: &str) -> PathB
 
 pub fn run(job: ExportJob) -> Result<ExportSummary, String> {
     let img = fit_within(&job.source, EXPORT_MAX_SIDE);
-    let r = process_with_selection(&img, &job.palette, Some(&job.selected), &job.settings);
+    let mask = job
+        .settings
+        .remove_background
+        .then(|| crate::subject::foreground_mask(&img).0);
+    let r = process_masked(&img, &job.palette, Some(&job.selected), &job.settings, mask.as_deref());
     let sb = SmoothBoundaries::build(&r.segmentation, r.sigma_px(&job.settings));
     let layers = build_layers(&r.segmentation, &sb, &r.palette, r.px_per_mm, &job.options);
     let mut summary = ExportSummary {

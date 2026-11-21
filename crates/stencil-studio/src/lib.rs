@@ -6,6 +6,7 @@ mod platform;
 #[cfg(not(target_os = "android"))]
 mod print;
 mod splash;
+pub mod subject;
 mod worker;
 
 use platform::PickKind;
@@ -52,6 +53,10 @@ struct State {
     layer_hit: Option<LayerHit>,
     /// Suggested background colours for the current subject (Remove background).
     bg_recommended: Vec<Rgb8>,
+    /// Colours read from a calibration scan, waiting for the user to apply them.
+    scan_result: Option<stencil_core::scan::ScanReading>,
+    /// The user has seen the "check by eye first" advice this session.
+    eyeball_ack: bool,
 }
 
 struct LayerHit {
@@ -81,6 +86,8 @@ thread_local! {
         undo: Vec::new(),
         layer_hit: None,
         bg_recommended: Vec::new(),
+        scan_result: None,
+        eyeball_ack: false,
     });
 }
 
@@ -323,7 +330,13 @@ fn apply_result(ui: &AppWindow, r: worker::JobResult) {
     ui.set_region_count_text(r.region_count.to_string().into());
     ui.set_threshold_text(format!("{} px", r.min_region_px).into());
     ui.set_output_size_text(format!("{:.0} × {:.0} mm", r.output_mm.0, r.output_mm.1).into());
-    ui.set_timing_text(format!("{} ms", r.elapsed.as_millis()).into());
+    ui.set_timing_text(
+        match r.subject_source {
+            Some(src) => format!("{} ms · subject: {}", r.elapsed.as_millis(), src.label()),
+            None => format!("{} ms", r.elapsed.as_millis()),
+        }
+        .into(),
+    );
 
     let chips: Vec<LayerChip> = r
         .layers
@@ -585,13 +598,16 @@ fn save_calibration(ui: &AppWindow, doc: CalibrationDoc) {
         return;
     };
     match std::fs::write(&path, calibration_pdf(ui, doc)) {
-        Ok(()) => ui.set_status_text(format!("Saved {} to {}", doc.title(), platform::pretty(&path)).into()),
+        Ok(()) => {
+            ui.set_status_text(format!("Saved {} to {}", doc.title(), platform::pretty(&path)).into());
+            platform::open_file(&path, "application/pdf");
+        }
         Err(e) => ui.set_status_text(format!("Could not save {}: {e}", doc.title()).into()),
     }
 }
 
 fn print_calibration(ui: &AppWindow, doc: CalibrationDoc) {
-    let path = std::env::temp_dir().join(format!("StencilStudio-{}", doc.file_name()));
+    let path = platform::temp_dir().join(format!("StencilStudio-{}", doc.file_name()));
     if let Err(e) = std::fs::write(&path, calibration_pdf(ui, doc)) {
         ui.set_status_text(format!("Could not prepare the {}: {e}", doc.title()).into());
         return;
@@ -740,11 +756,14 @@ fn show_picker(ui: &AppWindow, kind: PickKind) {
         .collect();
     let empty = match (kind, granted) {
         (PickKind::Image, false) => "Allow StencilStudio to access your photos when Android asks, then tap Refresh.",
+        (PickKind::Scan, false) => "Use Camera, Photos or Browse Files above (or allow photo access and tap Refresh).",
         (PickKind::Image, true) => "No images found in Pictures, DCIM, Download or Documents.",
         (PickKind::Palette, _) => "No palette files (.json) found in Documents or Download.",
+        (PickKind::Scan, _) => "No recent photos or PDFs. Use Camera, Photos or Browse Files above.",
     };
     ui.set_picker_title(kind.title().into());
-    ui.set_picker_allows_gallery(kind == PickKind::Image);
+    ui.set_picker_allows_gallery(kind != PickKind::Palette);
+    ui.set_picker_allows_camera(kind != PickKind::Palette);
     ui.set_picker_empty_text(empty.into());
     ui.set_picker_items(ModelRc::new(VecModel::from(items)));
     ui.set_picker_visible(true);
@@ -752,6 +771,148 @@ fn show_picker(ui: &AppWindow, kind: PickKind) {
         st.picker_kind = Some(kind);
         st.picker_paths = paths;
     });
+}
+
+/// Palette → Import Scan: advise one eyeball check first (once per session), then pick.
+fn start_scan_import(ui: &AppWindow) {
+    if with_state(|st| st.eyeball_ack) {
+        pick_scan(ui);
+        return;
+    }
+    ui.set_confirm_title("Check a few colours by eye first".into());
+    ui.set_confirm_text(
+        "Before importing a scan, hold 2–3 of your painted swatches next to the printed Manual Color Chart in daylight \
+         and note the closest patches. Then, after the import, compare them with what the scan read.\n\n\
+         Cameras and scanners shift colours with the light, and this one check catches it."
+            .into(),
+    );
+    ui.set_confirm_ok_text("Import Scan…".into());
+    ui.set_confirm_alt_text("Print Color Chart".into());
+    ui.set_confirm_visible(true);
+}
+
+fn pick_scan(ui: &AppWindow) {
+    with_state(|st| st.eyeball_ack = true);
+    if platform::NATIVE_DIALOGS {
+        if let Some(path) = platform::pick_file(PickKind::Scan) {
+            read_scan_path(ui, &path);
+        }
+    } else {
+        show_picker(ui, PickKind::Scan);
+    }
+}
+
+/// Read the sheet off the UI thread, then show the review.
+fn read_scan_path(ui: &AppWindow, path: &Path) {
+    ui.set_status_text(format!("Reading the calibration sheet in {}…", platform::pretty(path)).into());
+    ui.set_busy(true);
+    let weak = ui.as_weak();
+    let path = path.to_path_buf();
+    std::thread::spawn(move || {
+        let r = stencil_core::scan::load_scan(&path).and_then(|img| stencil_core::scan::read_sheet(&img));
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.set_busy(false);
+            match r {
+                Ok(reading) if reading.filled() == 0 => {
+                    ui.set_status_text("No painted boxes found on the sheet".into());
+                    show_message(
+                        &ui,
+                        "Import Scan",
+                        "The sheet was found, but every box looks empty (paper white). Fill the boxes with paint and try again.",
+                        true,
+                    );
+                }
+                Ok(reading) => show_scan_review(&ui, reading),
+                Err(e) => {
+                    ui.set_status_text("Couldn't read the calibration sheet".into());
+                    show_message(&ui, "Import Scan", &e, true);
+                }
+            }
+        });
+    });
+}
+
+fn show_scan_review(ui: &AppWindow, reading: stencil_core::scan::ScanReading) {
+    let target = with_state(|st| current_palette(ui, st));
+    let rows: Vec<ScanRow> = reading
+        .colors
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| c.map(|c| (i, c)))
+        .map(|(i, c)| {
+            let old = target.as_ref().and_then(|p| p.swatches.get(i));
+            ScanRow {
+                number: i as i32 + 1,
+                name: old
+                    .map(|s| s.name.clone())
+                    .unwrap_or_else(|| format!("Paint {}", i + 1))
+                    .into(),
+                has_old: old.is_some(),
+                old_color: old.map(|s| rgb_to_slint(s.color)).unwrap_or_default(),
+                new_color: rgb_to_slint(c),
+                hex: c.to_hex().into(),
+            }
+        })
+        .collect();
+    let dest = match &target {
+        Some(p) => format!("They will update “{}” (box 1 = its first colour, and so on).", p.name),
+        None => "They will become a new palette, “Scanned paints”.".into(),
+    };
+    let wb = reading.paper_white;
+    ui.set_scan_summary(
+        format!(
+            "Read {} colour{} from the {} sheet. {dest}\nCompare 2–3 with your eyeball check before applying. White or very pale paints can read as empty: set those by hand. Paper looked {} under your light; that has been corrected.",
+            rows.len(),
+            if rows.len() == 1 { "" } else { "s" },
+            reading.paper,
+            if (wb.r as i32 - wb.b as i32).abs() < 12 { "neutral" } else if wb.r > wb.b { "warm" } else { "cool" },
+        )
+        .into(),
+    );
+    ui.set_scan_rows(ModelRc::new(VecModel::from(rows)));
+    ui.set_scan_visible(true);
+    ui.set_status_text("Review the colours read from the sheet".into());
+    with_state(|st| st.scan_result = Some(reading));
+}
+
+fn apply_scan(ui: &AppWindow) {
+    let Some(reading) = with_state(|st| st.scan_result.take()) else {
+        return;
+    };
+    let n = reading.filled();
+    if ui.get_palette_source() > 0 {
+        edit_palette(ui, |p| {
+            for (i, c) in reading.colors.iter().enumerate() {
+                let Some(c) = c else { continue };
+                match p.swatches.get_mut(i) {
+                    Some(s) => s.color = *c,
+                    None => p.swatches.push(Swatch::new(format!("Paint {}", i + 1), *c)),
+                }
+            }
+        });
+    } else {
+        with_state(|st| {
+            let mut p = Palette::new("Scanned paints");
+            for (i, c) in reading.colors.iter().enumerate() {
+                if let Some(c) = c {
+                    p.swatches.push(Swatch::new(format!("Paint {}", i + 1), *c));
+                }
+            }
+            st.library.push(p);
+            ui.set_palette_source(st.library.len() as i32);
+            sync_palette_ui(ui, st);
+        });
+        request_processing(ui);
+    }
+    ui.set_scan_visible(false);
+    ui.set_status_text(
+        format!(
+            "Applied {n} colour{} from the calibration scan",
+            if n == 1 { "" } else { "s" }
+        )
+        .into(),
+    );
 }
 
 #[cfg(target_os = "android")]
@@ -956,7 +1117,7 @@ pub fn run(initial: Option<PathBuf>) -> Result<(), slint::PlatformError> {
     let w = ui.as_weak();
     ui.on_show_about(move || {
         let text = format!(
-                "StencilStudio {}\n\nTurn photos into multi-layer stencils and paint-by-numbers templates, matched to the colors you actually own.\n\nMade with Slint (https://slint.dev), used under the Slint Royalty-free License.",
+                "StencilStudio {}\n\nTurn photos into multi-layer stencils and paint-by-numbers templates, matched to the colors you actually own.\n\nMade with Slint (https://slint.dev), used under the Slint Royalty-free License.\n\nBackground removal uses Apple Vision on macOS 14+, and elsewhere the U²-Net-p model by Xuebin Qin et al. (Apache License 2.0).",
                 env!("CARGO_PKG_VERSION")
             );
         show_message(&w.unwrap(), "About StencilStudio", &text, false);
@@ -973,16 +1134,22 @@ pub fn run(initial: Option<PathBuf>) -> Result<(), slint::PlatformError> {
         match (kind, path) {
             (Some(PickKind::Image), Some(p)) => open_image_path(&ui, &p),
             (Some(PickKind::Palette), Some(p)) => load_palette_path(&ui, &p),
+            (Some(PickKind::Scan), Some(p)) => read_scan_path(&ui, &p),
             _ => {}
         }
     });
     let w = ui.as_weak();
-    ui.on_picker_system(move |gallery| {
+    ui.on_picker_system(move |source| {
         let ui = w.unwrap();
         let Some(kind) = with_state(|st| st.picker_kind) else {
             return;
         };
-        if !platform::system_pick(kind, gallery) {
+        let source = match source {
+            0 => platform::PickSource::Photos,
+            2 => platform::PickSource::Camera,
+            _ => platform::PickSource::Files,
+        };
+        if !platform::system_pick(kind, source) {
             show_message(&ui, kind.title(), "Couldn't open the system picker.", true);
             return;
         }
@@ -1004,6 +1171,7 @@ pub fn run(initial: Option<PathBuf>) -> Result<(), slint::PlatformError> {
                     match kind {
                         PickKind::Image => open_image_path(&ui, &path),
                         PickKind::Palette => load_palette_path(&ui, &path),
+                        PickKind::Scan => read_scan_path(&ui, &path),
                     }
                 },
             )
@@ -1034,6 +1202,30 @@ pub fn run(initial: Option<PathBuf>) -> Result<(), slint::PlatformError> {
     ui.on_save_color_chart(move || save_calibration(&w.unwrap(), CalibrationDoc::ColorChart));
     let w = ui.as_weak();
     ui.on_print_color_chart(move || print_calibration(&w.unwrap(), CalibrationDoc::ColorChart));
+    let w = ui.as_weak();
+    ui.on_import_scan(move || start_scan_import(&w.unwrap()));
+    let w = ui.as_weak();
+    ui.on_confirm_ok(move || {
+        let ui = w.unwrap();
+        ui.set_confirm_visible(false);
+        pick_scan(&ui);
+    });
+    let w = ui.as_weak();
+    ui.on_confirm_alt(move || {
+        let ui = w.unwrap();
+        ui.set_confirm_visible(false);
+        with_state(|st| st.eyeball_ack = true);
+        print_calibration(&ui, CalibrationDoc::ColorChart);
+    });
+    let w = ui.as_weak();
+    ui.on_scan_apply(move || apply_scan(&w.unwrap()));
+    let w = ui.as_weak();
+    ui.on_scan_cancel(move || {
+        let ui = w.unwrap();
+        ui.set_scan_visible(false);
+        with_state(|st| st.scan_result = None);
+        ui.set_status_text("Scan import cancelled".into());
+    });
 
     let w = ui.as_weak();
     ui.on_swatch_chart_code(move |i, code| {
