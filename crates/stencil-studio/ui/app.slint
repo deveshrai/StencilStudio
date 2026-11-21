@@ -1,0 +1,815 @@
+import { Button, ComboBox, CheckBox, LineEdit, ListView, SpinBox, ScrollView } from "std-widgets.slint";
+import { Theme, Hint } from "theme.slint";
+import { RibbonButton, RibbonGroup, RibbonTab, LabeledSlider } from "ribbon.slint";
+
+export { Theme, Hint }
+
+export struct SwatchItem {
+    color: color,
+    name: string,
+    hex: string,
+    active: bool,
+    usage: string,
+}
+
+component PanelHeader inherits Rectangle {
+    in property <string> title;
+    height: 28px;
+    background: Theme.panel-header;
+    HorizontalLayout {
+        padding-left: 10px;
+        Text {
+            text: root.title;
+            color: Theme.text-dim;
+            font-size: 10.5px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            vertical-alignment: center;
+        }
+    }
+    Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+}
+
+component PropRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> value;
+    spacing: 8px;
+    Text { text: root.label; color: Theme.text-dim; font-size: Theme.font-small; horizontal-stretch: 1; }
+    Text { text: root.value; color: Theme.text; font-size: Theme.font-small; horizontal-alignment: right; }
+}
+
+component SectionLabel inherits Text {
+    color: Theme.text-faint;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.6px;
+}
+
+export component AppWindow inherits Window {
+    title: root.file-name == "" ? "StencilStudio" : root.file-name + " — StencilStudio";
+    icon: @image-url("icons/stencil.svg");
+    preferred-width: 1440px;
+    preferred-height: 900px;
+    min-width: 960px;
+    min-height: 620px;
+    background: Theme.bg;
+    default-font-size: Theme.font-normal;
+
+    // ---- Document / processing state (shared with Rust) ----
+    in property <bool> has-image;
+    in property <bool> busy;
+    in property <string> file-name;
+    in property <string> status-text: "Ready";
+    in property <int> image-width: 1;
+    in property <int> image-height: 1;
+    in property <string> source-size-text: "—";
+    in property <string> output-size-text: "—";
+    in property <string> region-count-text: "—";
+    in property <string> threshold-text: "—";
+    in property <string> timing-text: "";
+
+    in property <image> original-image;
+    in property <image> reduced-image;
+    in property <image> outline-image;
+
+    in-out property <int> mode: 0; // 0 = Stencil, 1 = Paint-by-Numbers
+    in-out property <int> color-count: 3;
+    in property <int> max-colors: 12;
+    in-out property <float> min-region: 4.0; // mm²
+    in-out property <float> smoothing: 1;
+    in-out property <int> metric-index: 0; // 0 = CIEDE2000, 1 = CIE76
+    in property <[string]> paper-names;
+    in-out property <int> paper-index: 0;
+    in-out property <bool> landscape;
+
+    in property <[string]> palette-sources;
+    in-out property <int> palette-source: 1;
+    in property <bool> palette-editable: true;
+    in property <[SwatchItem]> swatches;
+    in-out property <int> selected-swatch: -1;
+
+    // ---- View state ----
+    in-out property <int> view-mode: 3; // 0 original, 1 reduced, 2 outlines, 3 split
+    in-out property <bool> fit-mode: true;
+    in-out property <float> zoom: 1.0;
+    in-out property <length> pan-x;
+    in-out property <length> pan-y;
+    in-out property <float> split: 0.5;
+    in-out property <bool> show-left-panel: true;
+    in-out property <bool> show-right-panel: true;
+    in-out property <bool> ribbon-collapsed: false;
+    in-out property <int> ribbon-tab: 0;
+
+    // ---- Callbacks to Rust ----
+    callback open-image();
+    callback load-palette();
+    callback save-palette();
+    callback settings-changed();
+    callback palette-source-selected(int);
+    callback add-swatch();
+    callback remove-swatch(int);
+    callback swatch-edited(int, string, string);
+    callback keep-auto-palette();
+    callback quit-app();
+    callback show-about();
+    callback show-shortcuts();
+    callback not-yet(string);
+
+    function set-mode(m: int) {
+        root.mode = m;
+        root.settings-changed();
+    }
+    function bump-colors(d: int) {
+        root.color-count = clamp(root.color-count + d, 1, root.max-colors);
+        root.settings-changed();
+    }
+
+    // ---- Zoom helpers ----
+    out property <float> fit-zoom: root.has-image
+        ? min(canvas.width / (root.image-width * 1px), canvas.height / (root.image-height * 1px)) * 0.94 : 1.0;
+    out property <float> effective-zoom: root.fit-mode ? root.fit-zoom : root.zoom;
+    function zoom-at(factor: float, mx: length, my: length) {
+        if (!root.has-image) { return; }
+        if (root.fit-mode) {
+            root.zoom = root.fit-zoom;
+            root.pan-x = 0px;
+            root.pan-y = 0px;
+            root.fit-mode = false;
+        }
+        let new-zoom = clamp(root.zoom * factor, 0.05, 32.0);
+        let ratio = new-zoom / root.zoom;
+        // Keep the image point under the cursor fixed.
+        let dx = mx - canvas.width / 2 - root.pan-x;
+        let dy = my - canvas.height / 2 - root.pan-y;
+        root.pan-x = mx - canvas.width / 2 - dx * ratio;
+        root.pan-y = my - canvas.height / 2 - dy * ratio;
+        root.zoom = new-zoom;
+    }
+    function zoom-center(factor: float) {
+        root.zoom-at(factor, canvas.width / 2, canvas.height / 2);
+    }
+    function zoom-fit() {
+        root.fit-mode = true;
+        root.pan-x = 0px;
+        root.pan-y = 0px;
+    }
+    function zoom-actual() {
+        root.fit-mode = false;
+        root.zoom = 1.0;
+        root.pan-x = 0px;
+        root.pan-y = 0px;
+    }
+
+    // ================= Menu bar =================
+    MenuBar {
+        Menu {
+            title: "File";
+            MenuItem { title: "Open Image…"; shortcut: @keys(Control + O); activated => { root.open-image(); } }
+            MenuSeparator { }
+            MenuItem { title: "Load Palette…"; shortcut: @keys(Control + Shift + O); activated => { root.load-palette(); } }
+            MenuItem { title: "Save Palette As…"; shortcut: @keys(Control + Shift + S); activated => { root.save-palette(); } }
+            MenuSeparator { }
+            Menu {
+                title: "Export";
+                MenuItem { title: "Print-Ready PDF…"; enabled: false; }
+                MenuItem { title: "Laser Cut SVG…"; enabled: false; }
+                MenuItem { title: "Laser Cut DXF…"; enabled: false; }
+                MenuItem { title: "3D Print STL / 3MF…"; enabled: false; }
+            }
+            MenuSeparator { }
+            MenuItem { title: "Quit StencilStudio"; role: MenuItemRole.quit; shortcut: @keys(Control + Q); activated => { root.quit-app(); } }
+        }
+        Menu {
+            title: "Edit";
+            MenuItem { title: "Undo"; enabled: false; shortcut: @keys(Control + Z); }
+            MenuItem { title: "Redo"; enabled: false; shortcut: @keys(Control + Shift + Z); }
+            MenuSeparator { }
+            MenuItem { title: "Add Color"; enabled: root.palette-editable; activated => { root.add-swatch(); } }
+            MenuItem {
+                title: "Remove Selected Color";
+                enabled: root.palette-editable && root.selected-swatch >= 0;
+                activated => { root.remove-swatch(root.selected-swatch); }
+            }
+        }
+        Menu {
+            title: "View";
+            MenuItem { title: "Original"; shortcut: @keys(Control + Digit1); activated => { root.view-mode = 0; } }
+            MenuItem { title: "Color-Reduced Preview"; shortcut: @keys(Control + Digit2); activated => { root.view-mode = 1; } }
+            MenuItem { title: "Cut / Outline View"; shortcut: @keys(Control + Digit3); activated => { root.view-mode = 2; } }
+            MenuItem { title: "Split: Original | Preview"; shortcut: @keys(Control + Digit4); activated => { root.view-mode = 3; } }
+            MenuSeparator { }
+            MenuItem { title: "Zoom In"; shortcut: @keys(Control + Equals); activated => { root.zoom-center(1.25); } }
+            MenuItem { title: "Zoom Out"; shortcut: @keys(Control + HyphenMinus); activated => { root.zoom-center(0.8); } }
+            MenuItem { title: "Fit to Window"; shortcut: @keys(Control + Digit0); activated => { root.zoom-fit(); } }
+            MenuItem { title: "Actual Pixels"; shortcut: @keys(Control + Alt + Digit0); activated => { root.zoom-actual(); } }
+            MenuSeparator { }
+            MenuItem { title: "Palette Panel"; shortcut: @keys(Control + Alt + L); activated => { root.show-left-panel = !root.show-left-panel; } }
+            MenuItem { title: "Properties Panel"; shortcut: @keys(Control + Alt + R); activated => { root.show-right-panel = !root.show-right-panel; } }
+            MenuItem { title: "Collapse Ribbon"; shortcut: @keys(Control + F1); activated => { root.ribbon-collapsed = !root.ribbon-collapsed; } }
+        }
+        Menu {
+            title: "Image";
+            MenuItem { title: "Stencil Mode"; shortcut: @keys(Control + Alt + S); activated => { root.set-mode(0); } }
+            MenuItem { title: "Paint-by-Numbers Mode"; shortcut: @keys(Control + Alt + P); activated => { root.set-mode(1); } }
+            MenuSeparator { }
+            MenuItem { title: "More Colors"; shortcut: @keys(Control + CloseBracket); activated => { root.bump-colors(1); } }
+            MenuItem { title: "Fewer Colors"; shortcut: @keys(Control + OpenBracket); activated => { root.bump-colors(-1); } }
+            MenuSeparator { }
+            MenuItem { title: "Crop…"; enabled: false; }
+            MenuItem { title: "Adjust Contrast…"; enabled: false; }
+            MenuItem { title: "Remove Background"; enabled: false; }
+        }
+        Menu {
+            title: "Help";
+            MenuItem { title: "Keyboard Shortcuts"; shortcut: @keys(Control + Slash); activated => { root.show-shortcuts(); } }
+            MenuItem { title: "About StencilStudio"; role: MenuItemRole.about; activated => { root.show-about(); } }
+        }
+    }
+
+    VerticalLayout {
+        // ================= Ribbon =================
+        Rectangle {
+            background: Theme.ribbon-tabs;
+            height: 32px;
+            HorizontalLayout {
+                padding-left: 8px;
+                RibbonTab { text: "Home"; active: root.ribbon-tab == 0; clicked => { root.ribbon-tab = 0; root.ribbon-collapsed = false; } }
+                RibbonTab { text: "Image"; active: root.ribbon-tab == 1; clicked => { root.ribbon-tab = 1; root.ribbon-collapsed = false; } }
+                RibbonTab { text: "Palette"; active: root.ribbon-tab == 2; clicked => { root.ribbon-tab = 2; root.ribbon-collapsed = false; } }
+                RibbonTab { text: "View"; active: root.ribbon-tab == 3; clicked => { root.ribbon-tab = 3; root.ribbon-collapsed = false; } }
+                RibbonTab { text: "Export"; active: root.ribbon-tab == 4; clicked => { root.ribbon-tab = 4; root.ribbon-collapsed = false; } }
+                Rectangle { horizontal-stretch: 1; }
+                RibbonButton {
+                    large: false;
+                    icon: root.ribbon-collapsed ? @image-url("icons/chevron-down.svg") : @image-url("icons/chevron-up.svg");
+                    text: "";
+                    tooltip: root.ribbon-collapsed ? "Expand ribbon (Ctrl+F1)" : "Collapse ribbon (Ctrl+F1)";
+                    y: 4px;
+                    clicked => { root.ribbon-collapsed = !root.ribbon-collapsed; }
+                }
+            }
+        }
+        if !root.ribbon-collapsed: Rectangle {
+            background: Theme.ribbon;
+            height: 96px;
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+
+            // ---- Home ----
+            if root.ribbon-tab == 0: HorizontalLayout {
+                padding-left: 4px;
+                alignment: start;
+                RibbonGroup {
+                    title: "File";
+                    RibbonButton { icon: @image-url("icons/open-image.svg"); text: "Open Image"; tooltip: "Open a photo or illustration (Ctrl+O)"; clicked => { root.open-image(); } }
+                    RibbonButton { icon: @image-url("icons/open.svg"); text: "Load Palette"; tooltip: "Load a saved palette (Ctrl+Shift+O)"; clicked => { root.load-palette(); } }
+                }
+                RibbonGroup {
+                    title: "Mode";
+                    RibbonButton { icon: @image-url("icons/stencil.svg"); text: "Stencil"; checked: root.mode == 0; tooltip: "Multi-layer stencil generator"; clicked => { root.set-mode(0); } }
+                    RibbonButton { icon: @image-url("icons/pbn.svg"); text: "Paint by Numbers"; checked: root.mode == 1; tooltip: "Numbered paint-by-numbers template"; clicked => { root.set-mode(1); } }
+                }
+                RibbonGroup {
+                    title: "Complexity";
+                    VerticalLayout {
+                        width: 190px;
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        alignment: center;
+                        spacing: 4px;
+                        LabeledSlider {
+                            label: "Colors";
+                            value-text: root.color-count + " of " + root.max-colors;
+                            minimum: 1;
+                            maximum: root.max-colors;
+                            value: root.color-count;
+                            changed(v) => { root.color-count = round(v); root.settings-changed(); }
+                        }
+                        LabeledSlider {
+                            label: "Min region";
+                            value-text: round(root.min-region * 10) / 10 + " mm²";
+                            minimum: 0;
+                            maximum: 100;
+                            step: 0.5;
+                            value: root.min-region;
+                            changed(v) => { root.min-region = v; root.settings-changed(); }
+                        }
+                    }
+                }
+                RibbonGroup {
+                    title: "Output Size";
+                    VerticalLayout {
+                        width: 200px;
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        alignment: center;
+                        spacing: 6px;
+                        ComboBox {
+                            model: root.paper-names;
+                            current-index <=> root.paper-index;
+                            selected => { root.settings-changed(); }
+                        }
+                        CheckBox {
+                            text: "Landscape";
+                            checked <=> root.landscape;
+                            toggled => { root.settings-changed(); }
+                        }
+                    }
+                }
+                RibbonGroup {
+                    title: "Preview";
+                    RibbonButton { icon: @image-url("icons/split.svg"); text: "Split"; checked: root.view-mode == 3; tooltip: "Original | Preview split (Ctrl+4)"; clicked => { root.view-mode = 3; } }
+                    RibbonButton { icon: @image-url("icons/reduced.svg"); text: "Preview"; checked: root.view-mode == 1; tooltip: "Color-reduced preview (Ctrl+2)"; clicked => { root.view-mode = 1; } }
+                    RibbonButton { icon: @image-url("icons/outline.svg"); text: "Outlines"; checked: root.view-mode == 2; tooltip: "Cut / outline view (Ctrl+3)"; clicked => { root.view-mode = 2; } }
+                }
+            }
+
+            // ---- Image ----
+            if root.ribbon-tab == 1: HorizontalLayout {
+                padding-left: 4px;
+                alignment: start;
+                RibbonGroup {
+                    title: "Adjust";
+                    RibbonButton { icon: @image-url("icons/crop.svg"); text: "Crop"; enabled: false; tooltip: "Crop (coming soon)"; }
+                    RibbonButton { icon: @image-url("icons/contrast.svg"); text: "Contrast"; enabled: false; tooltip: "Brightness / contrast (coming soon)"; }
+                    RibbonButton { icon: @image-url("icons/bg-remove.svg"); text: "Remove BG"; enabled: false; tooltip: "Background removal (coming soon)"; }
+                }
+                RibbonGroup {
+                    title: "Pre-processing";
+                    VerticalLayout {
+                        width: 190px;
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        alignment: center;
+                        LabeledSlider {
+                            label: "Smoothing";
+                            value-text: root.smoothing == 0 ? "Off" : round(root.smoothing) + " px";
+                            minimum: 0;
+                            maximum: 8;
+                            value: root.smoothing;
+                            changed(v) => { root.smoothing = round(v); root.settings-changed(); }
+                        }
+                    }
+                }
+                RibbonGroup {
+                    title: "Color Matching";
+                    VerticalLayout {
+                        width: 170px;
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        alignment: center;
+                        spacing: 2px;
+                        Text { text: "Distance metric"; color: Theme.text-dim; font-size: Theme.font-small; }
+                        ComboBox {
+                            model: ["CIEDE2000 (accurate)", "CIE76 (fast)"];
+                            current-index <=> root.metric-index;
+                            selected => { root.settings-changed(); }
+                        }
+                    }
+                }
+            }
+
+            // ---- Palette ----
+            if root.ribbon-tab == 2: HorizontalLayout {
+                padding-left: 4px;
+                alignment: start;
+                RibbonGroup {
+                    title: "Library";
+                    RibbonButton { icon: @image-url("icons/open.svg"); text: "Load"; tooltip: "Load palette (Ctrl+Shift+O)"; clicked => { root.load-palette(); } }
+                    RibbonButton { icon: @image-url("icons/save.svg"); text: "Save As"; tooltip: "Save palette (Ctrl+Shift+S)"; clicked => { root.save-palette(); } }
+                }
+                RibbonGroup {
+                    title: "Colors";
+                    RibbonButton { icon: @image-url("icons/add.svg"); text: "Add Color"; enabled: root.palette-editable; clicked => { root.add-swatch(); } }
+                    RibbonButton {
+                        icon: @image-url("icons/remove.svg");
+                        text: "Remove";
+                        enabled: root.palette-editable && root.selected-swatch >= 0;
+                        clicked => { root.remove-swatch(root.selected-swatch); }
+                    }
+                    RibbonButton {
+                        icon: @image-url("icons/auto.svg");
+                        text: "Keep Auto Palette";
+                        enabled: !root.palette-editable && root.has-image;
+                        tooltip: "Turn the auto-generated colors into an editable palette";
+                        clicked => { root.keep-auto-palette(); }
+                    }
+                }
+                RibbonGroup {
+                    title: "Calibration Sheet";
+                    RibbonButton { icon: @image-url("icons/print.svg"); text: "Print Sheet"; enabled: false; tooltip: "Printable palette calibration sheet (coming soon)"; }
+                    RibbonButton { icon: @image-url("icons/scan.svg"); text: "Import Scan"; enabled: false; tooltip: "Read colors from a photo/scan of the filled sheet (coming soon)"; }
+                }
+            }
+
+            // ---- View ----
+            if root.ribbon-tab == 3: HorizontalLayout {
+                padding-left: 4px;
+                alignment: start;
+                RibbonGroup {
+                    title: "Preview Mode";
+                    RibbonButton { icon: @image-url("icons/original.svg"); text: "Original"; checked: root.view-mode == 0; tooltip: "Ctrl+1"; clicked => { root.view-mode = 0; } }
+                    RibbonButton { icon: @image-url("icons/reduced.svg"); text: "Preview"; checked: root.view-mode == 1; tooltip: "Ctrl+2"; clicked => { root.view-mode = 1; } }
+                    RibbonButton { icon: @image-url("icons/outline.svg"); text: "Outlines"; checked: root.view-mode == 2; tooltip: "Ctrl+3"; clicked => { root.view-mode = 2; } }
+                    RibbonButton { icon: @image-url("icons/split.svg"); text: "Split"; checked: root.view-mode == 3; tooltip: "Ctrl+4"; clicked => { root.view-mode = 3; } }
+                }
+                RibbonGroup {
+                    title: "Zoom";
+                    RibbonButton { icon: @image-url("icons/zoom-in.svg"); text: "Zoom In"; tooltip: "Ctrl+="; clicked => { root.zoom-center(1.25); } }
+                    RibbonButton { icon: @image-url("icons/zoom-out.svg"); text: "Zoom Out"; tooltip: "Ctrl+-"; clicked => { root.zoom-center(0.8); } }
+                    RibbonButton { icon: @image-url("icons/fit.svg"); text: "Fit"; checked: root.fit-mode; tooltip: "Ctrl+0"; clicked => { root.zoom-fit(); } }
+                    RibbonButton { icon: @image-url("icons/actual.svg"); text: "100%"; tooltip: "Ctrl+Alt+0"; clicked => { root.zoom-actual(); } }
+                }
+                RibbonGroup {
+                    title: "Panels";
+                    RibbonButton { icon: @image-url("icons/panel-left.svg"); text: "Palette"; checked: root.show-left-panel; tooltip: "Ctrl+Alt+L"; clicked => { root.show-left-panel = !root.show-left-panel; } }
+                    RibbonButton { icon: @image-url("icons/panel-right.svg"); text: "Properties"; checked: root.show-right-panel; tooltip: "Ctrl+Alt+R"; clicked => { root.show-right-panel = !root.show-right-panel; } }
+                }
+            }
+
+            // ---- Export ----
+            if root.ribbon-tab == 4: HorizontalLayout {
+                padding-left: 4px;
+                alignment: start;
+                RibbonGroup {
+                    title: "Print";
+                    RibbonButton { icon: @image-url("icons/pdf.svg"); text: "PDF Packet"; enabled: false; tooltip: "Print-ready PDF (next milestone)"; }
+                }
+                RibbonGroup {
+                    title: "Laser / Cutter";
+                    RibbonButton { icon: @image-url("icons/vector.svg"); text: "SVG"; enabled: false; tooltip: "Vector SVG (next milestone)"; }
+                    RibbonButton { icon: @image-url("icons/vector.svg"); text: "DXF"; enabled: false; tooltip: "DXF (next milestone)"; }
+                }
+                RibbonGroup {
+                    title: "3D Print";
+                    RibbonButton { icon: @image-url("icons/cube.svg"); text: "STL / 3MF"; enabled: false; tooltip: "Flat 3D-printable stencil (phase 2)"; }
+                }
+            }
+        }
+
+        // ================= Workspace =================
+        HorizontalLayout {
+            vertical-stretch: 1;
+
+            // ---- Palette panel ----
+            if root.show-left-panel: Rectangle {
+                width: 264px;
+                background: Theme.panel;
+                Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+                VerticalLayout {
+                    padding-right: 1px;
+                    PanelHeader { title: "PALETTE"; }
+                    VerticalLayout {
+                        padding: 8px;
+                        spacing: 6px;
+                        ComboBox {
+                            model: root.palette-sources;
+                            current-index <=> root.palette-source;
+                            selected => { root.palette-source-selected(self.current-index); }
+                        }
+                        Text {
+                            visible: !root.palette-editable;
+                            text: "Colors are derived from the image. Use “Keep Auto Palette” to edit them.";
+                            wrap: word-wrap;
+                            color: Theme.text-faint;
+                            font-size: Theme.font-small;
+                        }
+                    }
+                    ListView {
+                        vertical-stretch: 1;
+                        for sw[i] in root.swatches: Rectangle {
+                            height: 38px;
+                            background: i == root.selected-swatch ? Theme.accent-soft : sta.has-hover ? Theme.hover : transparent;
+                            sta := TouchArea { clicked => { root.selected-swatch = i; } }
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                spacing: 10px;
+                                Rectangle {
+                                    width: 24px;
+                                    height: 24px;
+                                    y: (parent.height - self.height) / 2;
+                                    border-radius: 4px;
+                                    background: sw.color;
+                                    border-width: 1px;
+                                    border-color: #ffffff30;
+                                }
+                                VerticalLayout {
+                                    alignment: center;
+                                    horizontal-stretch: 1;
+                                    Text { text: sw.name; color: sw.active ? Theme.text : Theme.text-dim; overflow: elide; }
+                                    Text { text: sw.hex; color: Theme.text-faint; font-size: 10.5px; }
+                                }
+                                Text {
+                                    text: sw.usage;
+                                    color: Theme.text-dim;
+                                    font-size: Theme.font-small;
+                                    vertical-alignment: center;
+                                }
+                                Rectangle {
+                                    width: 8px;
+                                    height: 8px;
+                                    y: (parent.height - self.height) / 2;
+                                    border-radius: 4px;
+                                    background: sw.active ? Theme.accent : transparent;
+                                    border-width: 1px;
+                                    border-color: sw.active ? Theme.accent : Theme.text-faint;
+                                }
+                            }
+                        }
+                    }
+                    // Swatch editor
+                    if root.selected-swatch >= 0 && root.selected-swatch < root.swatches.length: Rectangle {
+                        background: Theme.panel-header;
+                        VerticalLayout {
+                            padding: 10px;
+                            spacing: 6px;
+                            SectionLabel { text: "SELECTED COLOR"; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Rectangle {
+                                    width: 34px;
+                                    border-radius: 4px;
+                                    background: root.swatches[root.selected-swatch].color;
+                                    border-width: 1px;
+                                    border-color: #ffffff30;
+                                }
+                                VerticalLayout {
+                                    spacing: 4px;
+                                    name-edit := LineEdit {
+                                        enabled: root.palette-editable;
+                                        placeholder-text: "Name (e.g. Cadmium Red)";
+                                        text: root.swatches[root.selected-swatch].name;
+                                        accepted(t) => { root.swatch-edited(root.selected-swatch, t, hex-edit.text); }
+                                    }
+                                    hex-edit := LineEdit {
+                                        enabled: root.palette-editable;
+                                        placeholder-text: "#RRGGBB";
+                                        text: root.swatches[root.selected-swatch].hex;
+                                        accepted(t) => { root.swatch-edited(root.selected-swatch, name-edit.text, t); }
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                Button { text: "Apply"; enabled: root.palette-editable; clicked => { root.swatch-edited(root.selected-swatch, name-edit.text, hex-edit.text); } }
+                                Button { text: "Remove"; enabled: root.palette-editable; clicked => { root.remove-swatch(root.selected-swatch); } }
+                            }
+                        }
+                    }
+                    HorizontalLayout {
+                        padding: 8px;
+                        spacing: 6px;
+                        Button { text: "Add Color"; enabled: root.palette-editable; clicked => { root.add-swatch(); } }
+                        Button { text: "Save…"; clicked => { root.save-palette(); } }
+                    }
+                }
+            }
+
+            // ---- Canvas ----
+            canvas := Rectangle {
+                horizontal-stretch: 1;
+                background: Theme.canvas;
+                clip: true;
+
+                property <length> disp-w: root.image-width * 1px * root.effective-zoom;
+                property <length> disp-h: root.image-height * 1px * root.effective-zoom;
+                property <length> img-x: (self.width - self.disp-w) / 2 + (root.fit-mode ? 0px : root.pan-x);
+                property <length> img-y: (self.height - self.disp-h) / 2 + (root.fit-mode ? 0px : root.pan-y);
+                property <ImageRendering> rendering: root.effective-zoom >= 2 ? ImageRendering.pixelated : ImageRendering.smooth;
+                property <length> drag-start-x;
+                property <length> drag-start-y;
+
+                if !root.has-image: VerticalLayout {
+                    alignment: center;
+                    spacing: 14px;
+                    HorizontalLayout {
+                        alignment: center;
+                        Image { source: @image-url("icons/open-image.svg"); width: 64px; height: 64px; colorize: Theme.text-faint; }
+                    }
+                    Text { text: "Open an image to get started"; color: Theme.text; font-size: 18px; horizontal-alignment: center; }
+                    Text { text: "JPG, PNG or WebP  ·  Ctrl+O"; color: Theme.text-dim; horizontal-alignment: center; }
+                    HorizontalLayout {
+                        alignment: center;
+                        Button { text: "Open Image…"; primary: true; clicked => { root.open-image(); } }
+                    }
+                }
+
+                if root.has-image: Rectangle {
+                    // drop shadow / paper edge
+                    x: canvas.img-x - 1px;
+                    y: canvas.img-y - 1px;
+                    width: canvas.disp-w + 2px;
+                    height: canvas.disp-h + 2px;
+                    background: #00000060;
+                }
+                if root.has-image: Image {
+                    x: canvas.img-x;
+                    y: canvas.img-y;
+                    width: canvas.disp-w;
+                    height: canvas.disp-h;
+                    image-fit: fill;
+                    image-rendering: canvas.rendering;
+                    source: root.view-mode == 0 ? root.original-image : root.view-mode == 2 ? root.outline-image : root.reduced-image;
+                }
+                if root.has-image && root.view-mode == 3: Rectangle {
+                    x: 0px;
+                    y: 0px;
+                    width: canvas.width * root.split;
+                    height: canvas.height;
+                    clip: true;
+                    Image {
+                        x: canvas.img-x;
+                        y: canvas.img-y;
+                        width: canvas.disp-w;
+                        height: canvas.disp-h;
+                        image-fit: fill;
+                        image-rendering: canvas.rendering;
+                        source: root.original-image;
+                    }
+                }
+
+                pan-area := TouchArea {
+                    enabled: root.has-image;
+                    mouse-cursor: self.pressed ? MouseCursor.grabbing : MouseCursor.default;
+                    pointer-event(ev) => {
+                        if (ev.kind == PointerEventKind.down) {
+                            if (root.fit-mode) {
+                                root.zoom = root.fit-zoom;
+                                root.pan-x = 0px;
+                                root.pan-y = 0px;
+                                root.fit-mode = false;
+                            }
+                            canvas.drag-start-x = root.pan-x;
+                            canvas.drag-start-y = root.pan-y;
+                        }
+                    }
+                    moved => {
+                        if (self.pressed) {
+                            root.pan-x = canvas.drag-start-x + (self.mouse-x - self.pressed-x);
+                            root.pan-y = canvas.drag-start-y + (self.mouse-y - self.pressed-y);
+                        }
+                    }
+                    scroll-event(ev) => {
+                        if (ev.modifiers.control || ev.modifiers.meta) {
+                            root.zoom-at(ev.delta-y > 0 ? 1.12 : 1 / 1.12, self.mouse-x, self.mouse-y);
+                        } else {
+                            if (root.fit-mode) {
+                                root.zoom = root.fit-zoom;
+                                root.fit-mode = false;
+                            }
+                            root.pan-x += ev.delta-x;
+                            root.pan-y += ev.delta-y;
+                        }
+                        accept
+                    }
+                }
+
+                // Split divider
+                if root.has-image && root.view-mode == 3: Rectangle {
+                    x: canvas.width * root.split - 7px;
+                    width: 14px;
+                    height: canvas.height;
+                    Rectangle { x: 6px; width: 2px; background: #ffffffcc; }
+                    Rectangle {
+                        y: (parent.height - self.height) / 2;
+                        width: 14px;
+                        height: 40px;
+                        border-radius: 7px;
+                        background: div-ta.pressed || div-ta.has-hover ? Theme.accent : #e8e8e8;
+                    }
+                    div-ta := TouchArea {
+                        mouse-cursor: MouseCursor.ew-resize;
+                        moved => {
+                            if (self.pressed) {
+                                root.split = clamp((parent.x + self.mouse-x) / canvas.width, 0.02, 0.98);
+                            }
+                        }
+                    }
+                }
+                if root.has-image && root.view-mode == 3: Text {
+                    x: 12px;
+                    y: 10px;
+                    text: "ORIGINAL";
+                    color: #ffffffb0;
+                    font-size: 10.5px;
+                    font-weight: 700;
+                }
+                if root.has-image && root.view-mode == 3: Text {
+                    x: canvas.width - self.width - 12px;
+                    y: 10px;
+                    text: root.mode == 0 ? "STENCIL PREVIEW" : "PAINT-BY-NUMBERS PREVIEW";
+                    color: #ffffffb0;
+                    font-size: 10.5px;
+                    font-weight: 700;
+                }
+                if root.busy: Rectangle {
+                    x: canvas.width - 110px;
+                    y: canvas.height - 34px;
+                    width: 98px;
+                    height: 24px;
+                    border-radius: 12px;
+                    background: #000000a0;
+                    Text { text: "Processing…"; color: Theme.text; font-size: Theme.font-small; }
+                }
+            }
+
+            // ---- Properties panel ----
+            if root.show-right-panel: Rectangle {
+                width: 272px;
+                background: Theme.panel;
+                Rectangle { x: 0px; width: 1px; background: Theme.border; }
+                VerticalLayout {
+                    padding-left: 1px;
+                    PanelHeader { title: "PROPERTIES"; }
+                    ScrollView {
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            padding: 12px;
+                            spacing: 8px;
+                            alignment: start;
+
+                            SectionLabel { text: "MODE"; }
+                            HorizontalLayout {
+                                spacing: 4px;
+                                RibbonButton { large: false; icon: @image-url("icons/stencil.svg"); text: "Stencil"; checked: root.mode == 0; clicked => { root.set-mode(0); } }
+                                RibbonButton { large: false; icon: @image-url("icons/pbn.svg"); text: "Paint by Numbers"; checked: root.mode == 1; clicked => { root.set-mode(1); } }
+                            }
+
+                            SectionLabel { text: "COMPLEXITY"; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                Text { text: "Colors"; color: Theme.text-dim; font-size: Theme.font-small; vertical-alignment: center; horizontal-stretch: 1; }
+                                SpinBox {
+                                    width: 110px;
+                                    minimum: 1;
+                                    maximum: root.max-colors;
+                                    value: root.color-count;
+                                    edited(v) => { root.color-count = v; root.settings-changed(); }
+                                }
+                            }
+                            LabeledSlider {
+                                label: "Min region size";
+                                value-text: round(root.min-region * 10) / 10 + " mm²";
+                                minimum: 0;
+                                maximum: 100;
+                                step: 0.5;
+                                value: root.min-region;
+                                changed(v) => { root.min-region = v; root.settings-changed(); }
+                            }
+                            LabeledSlider {
+                                label: "Smoothing";
+                                value-text: root.smoothing == 0 ? "Off" : round(root.smoothing) + " px";
+                                minimum: 0;
+                                maximum: 8;
+                                value: root.smoothing;
+                                changed(v) => { root.smoothing = round(v); root.settings-changed(); }
+                            }
+
+                            SectionLabel { text: "OUTPUT"; }
+                            ComboBox {
+                                model: root.paper-names;
+                                current-index <=> root.paper-index;
+                                selected => { root.settings-changed(); }
+                            }
+                            CheckBox {
+                                text: "Landscape";
+                                checked <=> root.landscape;
+                                toggled => { root.settings-changed(); }
+                            }
+                            PropRow { label: "Printed size"; value: root.output-size-text; }
+
+                            SectionLabel { text: "DOCUMENT"; }
+                            PropRow { label: "Source image"; value: root.source-size-text; }
+                            PropRow { label: "Working size"; value: root.has-image ? root.image-width + " × " + root.image-height + " px" : "—"; }
+                            PropRow { label: "Regions"; value: root.region-count-text; }
+                            PropRow { label: "Merge threshold"; value: root.threshold-text; }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ================= Status bar =================
+        Rectangle {
+            height: 24px;
+            background: Theme.panel-header;
+            Rectangle { y: 0px; height: 1px; background: Theme.border; }
+            HorizontalLayout {
+                padding-left: 10px;
+                padding-right: 10px;
+                spacing: 18px;
+                Text {
+                    text: Hint.text != "" ? Hint.text : root.status-text;
+                    color: Theme.text-dim;
+                    font-size: Theme.font-small;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+                Text { text: root.timing-text; color: Theme.text-faint; font-size: Theme.font-small; vertical-alignment: center; }
+                Text { text: root.has-image ? root.region-count-text + " regions" : ""; color: Theme.text-dim; font-size: Theme.font-small; vertical-alignment: center; }
+                Rectangle { width: 52px; Text { x: 0px; width: parent.width; height: parent.height; horizontal-alignment: right; vertical-alignment: center; text: root.has-image ? round(root.effective-zoom * 100) + "%" : ""; color: Theme.text-dim; font-size: Theme.font-small; } }
+            }
+        }
+    }
+}

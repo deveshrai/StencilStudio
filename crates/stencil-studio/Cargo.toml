@@ -1,0 +1,13 @@
+[package]
+name = "stencil-studio"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+rfd = "0.18"
+slint = "1.19"
+stencil-core = { version = "0.1.0", path = "../stencil-core" }
+
+[build-dependencies]
+slint-build = "1.19"
