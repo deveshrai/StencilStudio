@@ -25,7 +25,7 @@ xattr -dr com.apple.quarantine /Applications/StencilStudio.app
 
 StencilStudio also runs on Android tablets and foldables (Android 10+, arm64). It has the same ribbon UI with touch on top: two-finger pinch to zoom, drag to pan, and keyboard shortcuts when a keyboard is attached. It has been tested on a Galaxy Z Fold and a Pixel Tablet emulator. Differences from desktop:
 
-- **Open Image** shows an in-app browser of photos in Pictures, DCIM, Download and Documents. Android asks for photo access the first time.
+- **Open Image** offers the system **Photos** picker (no permission needed), **Browse Files…** (the Files app, including Drive and other providers), or a quick list of recent images in Pictures, DCIM, Download and Documents. Android asks for photo access the first time you use that list.
 - Exports and calibration PDFs are saved to **Documents/StencilStudio**, where you can open them in the Files app (and print from there).
 - The desktop menu bar is hidden; everything is in the ribbon. On narrow screens, use the ‹ › buttons to scroll the ribbon.
 
@@ -36,20 +36,33 @@ To build: `scripts/build-android.sh --install <adb-serial>`. This needs the Andr
 1. **Open an image.** Use JPG, PNG or WebP (`Ctrl+O`, or drop a path on the command line).
 2. **Tell it which colors you own.** Pick a built-in palette, load or save your own, or let it derive colors from the image ("Auto").
    For an exact physical match, use the [manual color chart](#calibrating-to-your-real-paints).
-3. **Choose a mode.** **Stencil** creates one cut sheet per color. **Paint by Numbers** creates an outline template.
-4. **Tune it live.** Use these controls:
+3. **Optionally remove the background** (**Remove BG**, `Ctrl+Shift+B`). The subject is cut out and gets all the colours; the background becomes one flat colour of your choice (see [below](#remove-background)).
+4. **Choose a mode.** **Stencil** creates one cut sheet per color. **Paint by Numbers** creates an outline template.
+5. **Tune it live.** Use these controls:
    - the number of colors;
    - the *minimum region size* in mm², measured at your chosen paper size, so nothing is too small to cut or paint;
    - curve smoothing;
    - pre-smoothing.
 
    The preview updates within about 0.1 s.
-5. **Export.** Choose SVG or DXF for laser/vinyl cutters, or STL for 3D printing (`Ctrl+E`).
+6. **Export.** Choose SVG or DXF for laser/vinyl cutters, or STL for 3D printing (`Ctrl+E`).
 
 Colors are matched perceptually (CIELAB / CIEDE2000), not by raw RGB. When you limit the number of colors, StencilStudio picks the subset of *your* palette that best reproduces the image. It weighs that choice toward what you'd notice:
 
 - **Vivid colors** count more, so a red subject stays red rather than turning into a "safe" brown.
 - **Sharp, in-focus areas** count more (*Focus on subject*, on by default under **Image → Color Matching**), so a subject in front of a blurry background gets its colors first. In the hummingbird above, this is what keeps the red throat. Without it, the brown bokeh background takes that color slot.
+
+## Remove background
+
+![The hummingbird with its background removed, previewed on a recommended Sap Green](docs/screenshots/remove-background.png)
+
+**Remove BG** (Home tab, Image menu, or `Ctrl+Shift+B`) separates the subject from its background. Then:
+
+- **Every colour goes to the subject.** In the 3-colour example above, the bird gets yellow, red and blue, instead of spending a colour on the dark bokeh.
+- **The background is one flat area.** It never becomes a stencil layer, and it's left as a single region in paint-by-numbers. Paint it in your chosen colour first, or leave the surface bare.
+- **Pick the preview background:** **White**, **Black**, one of three **recommended** paints from your palette (chosen to stand out against the subject's main colours), or **Custom** (hue/saturation/lightness sliders or a hex code).
+
+It works without an AI model. It's a GrabCut-style colour-model segmentation that uses the image border, sharpness and centre as cues. It works best when the subject is in focus against a softer or plainer background, such as wildlife or portraits with bokeh. A busy background close to the subject's colours (for example, a beige coat against sunlit blossom) can leave patches behind. Turn it off for those for now; a brush to correct the mask is planned.
 
 ## Stencil mode
 
@@ -138,6 +151,7 @@ The palette list shows each color's nearest chart code, so you can also check ex
 | Ctrl+= / Ctrl+- / Ctrl+0 | Zoom in / out / fit (Ctrl+scroll zooms at the cursor; drag to pan) |
 | Ctrl+Alt+0 | Actual pixels |
 | Ctrl+] / Ctrl+[ | More / fewer colors |
+| Ctrl+Shift+B | Remove / restore the background |
 | Ctrl+Alt+S / P | Stencil / Paint-by-Numbers mode |
 | Ctrl+Alt+L / R | Toggle palette / properties panel |
 | Ctrl+F1 | Collapse the ribbon |
@@ -159,6 +173,10 @@ Developer tools:
 ```sh
 # Full pipeline without the UI: previews + per-layer SVG/DXF/STL
 cargo run -p stencil-core --release --example reduce -- in.jpg 4 out_dir/ [palette.json]
+# Background-removal mask preview (removed area in magenta)
+cargo run -p stencil-core --release --example bgmask -- in.jpg mask.png
+# Re-trace the logo and regenerate every app icon (macOS)
+python3 scripts/make-icons.py
 # Calibration PDFs
 cargo run -p stencil-core --example calibration_sheet -- sheet.pdf [letter]
 ```
@@ -174,10 +192,11 @@ cargo run -p stencil-core --example calibration_sheet -- sheet.pdf [letter]
 1. The image is downscaled to ≤1600 px for the live preview (≤3000 px for export) and optionally pre-blurred.
 2. A 5-bit-per-channel histogram is converted to CIELAB.
 3. **Palette selection** picks the *k* colors from your palette that minimize the pixel-weighted CIEDE2000 error (greedy + swap refinement), with chroma-weighted saliency. *Auto* mode runs weighted k-means++ instead.
-4. Pixels are mapped to the chosen colors and labeled into 4-connected regions. Regions smaller than the minimum size (mm² at print size) merge into the neighbor they share the longest border with.
-5. **Vectorization:** region borders are split into chains between junctions. Each chain is Gaussian-smoothed once with its ends pinned, so every outline built from them shares identical edges.
-6. **Stencil sheets:** for each color, solid material = frame + every other color. Floating pieces are bridged or dropped on a pixel mask; the smooth outlines are then merged with the bridges using a robust polygon union (i_overlay), which also removes any self-intersections.
-7. **STL:** ear-clipping triangulation with tiny deterministic jitter (removes collinear T-junctions) and pinch-point separation, so the mesh is strictly manifold.
+4. With **Remove background**, a subject mask is estimated first (see above); background pixels are left out of the histogram and become one extra "Background" region that is never a layer.
+5. Pixels are mapped to the chosen colors and labeled into 4-connected regions. Regions smaller than the minimum size (mm² at print size) merge into the neighbor they share the longest border with.
+6. **Vectorization:** region borders are split into chains between junctions. Each chain is Gaussian-smoothed once with its ends pinned, so every outline built from them shares identical edges.
+7. **Stencil sheets:** for each color, solid material = frame + every other color. Floating pieces are bridged or dropped on a pixel mask; the smooth outlines are then merged with the bridges using a robust polygon union (i_overlay), which also removes any self-intersections.
+8. **STL:** ear-clipping triangulation with tiny deterministic jitter (removes collinear T-junctions) and pinch-point separation, so the mesh is strictly manifold.
 
 </details>
 
@@ -187,8 +206,9 @@ cargo run -p stencil-core --example calibration_sheet -- sheet.pdf [letter]
 - **0.1.1:** bridges for floating pieces (size-aware drop/bridge), manual color chart + chart codes, README walkthrough.
 - **0.1.2:** *Focus on subject* color selection; STL robustness fixes found on high-res photos; new screenshots.
 - **0.1.4:** Layers view with click-to-add/remove bridges and undo; new puppy app icon.
-- **Next:** kerf offset, paint-by-numbers numbers + PDF packet, scan-sheet import (with an eyeball-check step), color wheel, crop/contrast/background removal, project files.
+- **0.1.5:** Remove background (white / black / recommended / custom preview colour); hummingbird app icon traced to clean vectors and a startup animation; Android system Photos and Files pickers.
+- **Next:** kerf offset, paint-by-numbers numbers + PDF packet, scan-sheet import (with an eyeball-check step), color wheel, crop/contrast, a brush to fix the background mask, project files.
 - **Android preview:** same app on tablets/foldables; in-app image browser, pinch-zoom, touch-friendly ribbon.
-- **Later:** Android system photo picker & share/print intents, 3MF, paint-mixing suggestions, Windows/Linux packages, iPad build.
+- **Later:** Android share/print intents, 3MF, paint-mixing suggestions, Windows/Linux packages, iPad build.
 
 *Screenshots use royalty-free stock photos, for demonstration only. They are not included in the repository. `docs/sample/balloon.jpg` is an original illustration made for this project that you can use for testing.*

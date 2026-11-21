@@ -5,6 +5,7 @@ mod export_job;
 mod platform;
 #[cfg(not(target_os = "android"))]
 mod print;
+mod splash;
 mod worker;
 
 use platform::PickKind;
@@ -49,6 +50,8 @@ struct State {
     undo: Vec<BTreeMap<u16, BridgeEdits>>,
     /// The layer currently shown in the Layers view, for click hit-testing.
     layer_hit: Option<LayerHit>,
+    /// Suggested background colours for the current subject (Remove background).
+    bg_recommended: Vec<Rgb8>,
 }
 
 struct LayerHit {
@@ -59,6 +62,8 @@ struct LayerHit {
 }
 
 thread_local! {
+    /// Polls for the Android system picker's answer.
+    static PICK_TIMER: slint::Timer = slint::Timer::default();
     static STATE: RefCell<State> = RefCell::new(State {
         source: None,
         working: None,
@@ -75,6 +80,7 @@ thread_local! {
         bridge_edits: BTreeMap::new(),
         undo: Vec::new(),
         layer_hit: None,
+        bg_recommended: Vec::new(),
     });
 }
 
@@ -121,7 +127,84 @@ fn read_settings(ui: &AppWindow, st: &State) -> Settings {
         curve_smoothing_mm: ui.get_curve_smoothing(),
         smooth_outlines: ui.get_smooth_outlines(),
         focus_on_subject: ui.get_focus_on_subject(),
+        remove_background: ui.get_remove_background(),
+        background_color: background_color(ui, st),
     }
+}
+
+fn slint_to_rgb(c: slint::Color) -> Rgb8 {
+    Rgb8::new(c.red(), c.green(), c.blue())
+}
+
+/// The preview background picked in the ribbon (white, black, recommended or custom).
+fn background_color(ui: &AppWindow, st: &State) -> Rgb8 {
+    match ui.get_bg_choice() {
+        1 => Rgb8::new(0, 0, 0),
+        i @ 2..=4 => st
+            .bg_recommended
+            .get(i as usize - 2)
+            .copied()
+            .unwrap_or(Rgb8::new(255, 255, 255)),
+        5 => slint_to_rgb(ui.get_bg_custom()),
+        _ => Rgb8::new(255, 255, 255),
+    }
+}
+
+/// Status-line name for the chosen background colour.
+fn background_label(ui: &AppWindow, st: &State) -> String {
+    let c = background_color(ui, st);
+    match ui.get_bg_choice() {
+        0 => "White".into(),
+        1 => "Black".into(),
+        5 => format!("Custom {}", c.to_hex()),
+        _ => {
+            let pal = current_palette(ui, st).unwrap_or_else(|| st.auto_palette.clone());
+            let name = pal
+                .swatches
+                .iter()
+                .find(|s| s.color == c)
+                .map(|s| s.name.clone())
+                .unwrap_or_else(|| c.to_hex());
+            format!("{name} (recommended)")
+        }
+    }
+}
+
+/// HSL (h in degrees, s/l in 0..1) to sRGB.
+fn hsl_to_rgb(h: f32, s: f32, l: f32) -> Rgb8 {
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let hp = (h.rem_euclid(360.0)) / 60.0;
+    let x = c * (1.0 - (hp % 2.0 - 1.0).abs());
+    let (r, g, b) = match hp as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    let m = l - c / 2.0;
+    let q = |v: f32| ((v + m) * 255.0).round().clamp(0.0, 255.0) as u8;
+    Rgb8::new(q(r), q(g), q(b))
+}
+
+fn rgb_to_hsl(c: Rgb8) -> (f32, f32, f32) {
+    let (r, g, b) = (c.r as f32 / 255.0, c.g as f32 / 255.0, c.b as f32 / 255.0);
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let l = (max + min) / 2.0;
+    let d = max - min;
+    if d < 1e-6 {
+        return (0.0, 0.0, l);
+    }
+    let s = d / (1.0 - (2.0 * l - 1.0).abs());
+    let h = if max == r {
+        60.0 * ((g - b) / d).rem_euclid(6.0)
+    } else if max == g {
+        60.0 * ((b - r) / d + 2.0)
+    } else {
+        60.0 * ((r - g) / d + 4.0)
+    };
+    (h, s, l)
 }
 
 /// Fill the palette panel list. `selected`/`usage` describe the last processing result.
@@ -220,6 +303,21 @@ fn apply_result(ui: &AppWindow, r: worker::JobResult) {
             show_swatches(ui, &r.palette, &r.selected, &r.usage);
         }
     });
+    // Background removal: refresh the suggestions; if a recommended colour is in use and
+    // the suggestion moved (new image or colours), re-render with the new one.
+    let rerun = with_state(|st| {
+        st.bg_recommended = r.recommended.clone();
+        let colors: Vec<slint::Color> = r.recommended.iter().map(|&c| rgb_to_slint(c)).collect();
+        ui.set_bg_recommended(ModelRc::new(VecModel::from(colors)));
+        if (2..=4).contains(&ui.get_bg_choice()) && ui.get_bg_choice() as usize - 2 >= r.recommended.len() {
+            ui.set_bg_choice(if r.recommended.is_empty() { 0 } else { 2 });
+        }
+        ui.set_bg_label(background_label(ui, st).into());
+        r.background_share.is_some() && background_color(ui, st) != r.background_color
+    });
+    if rerun && r.generation == with_state(|st| st.requested_generation) {
+        request_processing(ui);
+    }
     ui.set_reduced_image(Image::from_rgba8(r.reduced));
     ui.set_outline_image(Image::from_rgba8(r.outlines));
     ui.set_region_count_text(r.region_count.to_string().into());
@@ -646,6 +744,7 @@ fn show_picker(ui: &AppWindow, kind: PickKind) {
         (PickKind::Palette, _) => "No palette files (.json) found in Documents or Download.",
     };
     ui.set_picker_title(kind.title().into());
+    ui.set_picker_allows_gallery(kind == PickKind::Image);
     ui.set_picker_empty_text(empty.into());
     ui.set_picker_items(ModelRc::new(VecModel::from(items)));
     ui.set_picker_visible(true);
@@ -684,6 +783,7 @@ Ctrl+= / Ctrl+-\tZoom in / out (or Ctrl+scroll)
 Ctrl+0\tFit to window
 Ctrl+Alt+0\tActual pixels
 Ctrl+] / Ctrl+[\tMore / fewer colors
+Ctrl+Shift+B\tRemove / restore background
 Ctrl+Alt+S / P\tStencil / Paint-by-Numbers mode
 Ctrl+Alt+L / R\tToggle palette / properties panel
 Ctrl+F1\tCollapse ribbon
@@ -694,6 +794,8 @@ On macOS, Ctrl means ⌘ Command.";
 /// Build the UI and run the event loop. `initial` is an image to open on start.
 pub fn run(initial: Option<PathBuf>) -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
+    ui.set_version(env!("CARGO_PKG_VERSION").into());
+    splash::start(&ui);
     ui.set_native_dialogs(platform::NATIVE_DIALOGS);
     if cfg!(target_os = "android") {
         // Narrow screens: start with the properties panel hidden; it can be toggled in View.
@@ -735,6 +837,30 @@ pub fn run(initial: Option<PathBuf>) -> Result<(), slint::PlatformError> {
 
     let w = ui.as_weak();
     ui.on_settings_changed(move || request_processing(&w.unwrap()));
+
+    let w = ui.as_weak();
+    ui.on_bg_hsl_changed(move || {
+        let ui = w.unwrap();
+        let c = hsl_to_rgb(ui.get_bg_hue(), ui.get_bg_sat(), ui.get_bg_light());
+        ui.set_bg_custom(rgb_to_slint(c));
+        ui.set_bg_custom_hex(c.to_hex().into());
+        ui.set_bg_choice(5);
+        ui.set_remove_background(true);
+        request_processing(&ui);
+    });
+    let w = ui.as_weak();
+    ui.on_bg_hex_entered(move |t| {
+        let ui = w.unwrap();
+        let Some(c) = Rgb8::from_hex(t.trim()) else { return };
+        let (h, s, l) = rgb_to_hsl(c);
+        ui.set_bg_hue(h);
+        ui.set_bg_sat(s);
+        ui.set_bg_light(l);
+        ui.set_bg_custom(rgb_to_slint(c));
+        ui.set_bg_choice(5);
+        ui.set_remove_background(true);
+        request_processing(&ui);
+    });
 
     let w = ui.as_weak();
     ui.on_palette_source_selected(move |_| {
@@ -849,6 +975,39 @@ pub fn run(initial: Option<PathBuf>) -> Result<(), slint::PlatformError> {
             (Some(PickKind::Palette), Some(p)) => load_palette_path(&ui, &p),
             _ => {}
         }
+    });
+    let w = ui.as_weak();
+    ui.on_picker_system(move |gallery| {
+        let ui = w.unwrap();
+        let Some(kind) = with_state(|st| st.picker_kind) else {
+            return;
+        };
+        if !platform::system_pick(kind, gallery) {
+            show_message(&ui, kind.title(), "Couldn't open the system picker.", true);
+            return;
+        }
+        ui.set_picker_visible(false);
+        // The picker runs in its own activity; check for its answer a few times a second.
+        let w = ui.as_weak();
+        PICK_TIMER.with(|t| {
+            t.start(
+                slint::TimerMode::Repeated,
+                std::time::Duration::from_millis(250),
+                move || {
+                    let Some(outcome) = platform::poll_system_pick() else {
+                        return;
+                    };
+                    PICK_TIMER.with(|t| t.stop());
+                    let (Some(ui), Some(path)) = (w.upgrade(), outcome) else {
+                        return;
+                    };
+                    match kind {
+                        PickKind::Image => open_image_path(&ui, &path),
+                        PickKind::Palette => load_palette_path(&ui, &path),
+                    }
+                },
+            )
+        });
     });
     let w = ui.as_weak();
     ui.on_picker_refresh(move || {

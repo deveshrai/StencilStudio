@@ -5,10 +5,11 @@ use slint::{Rgba8Pixel, SharedPixelBuffer};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
-use stencil_core::quantize::{Histogram, auto_palette, detail_weights};
+use stencil_core::pipeline::{process_masked, subject_weights};
+use stencil_core::quantize::{Histogram, auto_palette};
 use stencil_core::stencil::{Bridge, StencilOptions, build_layer_for, layer_order};
 use stencil_core::vector::SmoothBoundaries;
-use stencil_core::{Mode, Palette, Rgb8, Settings, process, render};
+use stencil_core::{Mode, Palette, Rgb8, Settings, background, render};
 
 pub struct Job {
     pub generation: u64,
@@ -51,6 +52,11 @@ pub struct JobResult {
     /// Stencil layers in painting order: (palette index, color, name).
     pub layers: Vec<(u16, Rgb8, String)>,
     pub layer: Option<LayerView>,
+    /// With the background removed: its share of the picture, and suggested colours.
+    pub background_share: Option<f32>,
+    pub recommended: Vec<Rgb8>,
+    /// Background colour this result was rendered with.
+    pub background_color: Rgb8,
     pub elapsed: Duration,
 }
 
@@ -64,34 +70,62 @@ pub fn spawn(deliver: impl Fn(JobResult) + Send + 'static) -> Sender<Job> {
     std::thread::Builder::new()
         .name("stencil-worker".into())
         .spawn(move || {
+            // The subject mask only depends on the image, so keep it while sliders move.
+            let mut mask_cache: Option<(Arc<image::RgbImage>, Arc<Vec<bool>>)> = None;
             while let Ok(mut job) = rx.recv() {
                 // Coalesce: skip to the newest pending request.
                 while let Ok(newer) = rx.try_recv() {
                     job = newer;
                 }
                 let t0 = Instant::now();
+                let mask = job.settings.remove_background.then(|| match &mask_cache {
+                    Some((img, m)) if Arc::ptr_eq(img, &job.image) => m.clone(),
+                    _ => {
+                        let m = Arc::new(background::foreground_mask(&job.image));
+                        mask_cache = Some((job.image.clone(), m.clone()));
+                        m
+                    }
+                });
+                let mask = mask.as_deref().map(|m| m.as_slice());
                 let palette = job.palette.unwrap_or_else(|| {
-                    let w = job.settings.focus_on_subject.then(|| detail_weights(&job.image));
+                    let w = subject_weights(&job.image, &job.settings, mask);
                     auto_palette(
                         &Histogram::build_weighted(&job.image, w.as_deref()),
                         job.settings.color_count,
                     )
                 });
-                let r = process(&job.image, &palette, &job.settings);
+                let r = process_masked(&job.image, &palette, None, &job.settings, mask);
+                // `full` = palette plus the background swatch (if any); the UI lists `palette`.
+                let full = &r.palette;
+                let bg = r.segmentation.background;
+                let total: u32 = r.usage.iter().sum();
+                let subject_px = total - bg.map(|b| r.usage[b as usize]).unwrap_or(0);
+                let background_share = bg.map(|b| r.usage[b as usize] as f32 / total.max(1) as f32);
+                let recommended = if bg.is_some() {
+                    let subject: Vec<(Rgb8, f32)> = (0..palette.len())
+                        .filter(|&i| r.usage[i] > 0)
+                        .map(|i| (palette.swatches[i].color, r.usage[i] as f32 / subject_px.max(1) as f32))
+                        .collect();
+                    background::recommend_backgrounds(&subject, &palette, 3)
+                } else {
+                    Vec::new()
+                };
+                let mut usage = r.usage.clone();
+                usage.truncate(palette.len());
                 let smooth = job.settings.mode == Mode::Stencil || job.settings.smooth_outlines;
                 let mut layers = Vec::new();
                 let mut layer_view = None;
                 let (reduced, outlines) = if smooth {
                     let sb = SmoothBoundaries::build(&r.segmentation, r.sigma_px(&job.settings));
                     if job.settings.mode == Mode::Stencil {
-                        let order = layer_order(&r.segmentation, &palette);
+                        let order = layer_order(&r.segmentation, full);
                         layers = order
                             .iter()
                             .map(|&c| {
                                 (
                                     c,
-                                    palette.swatches[c as usize].color,
-                                    palette.swatches[c as usize].name.clone(),
+                                    full.swatches[c as usize].color,
+                                    full.swatches[c as usize].name.clone(),
                                 )
                             })
                             .collect();
@@ -101,7 +135,7 @@ pub fn spawn(deliver: impl Fn(JobResult) + Send + 'static) -> Sender<Job> {
                                 let l = build_layer_for(
                                     &r.segmentation,
                                     &sb,
-                                    &palette,
+                                    full,
                                     color,
                                     index + 1,
                                     r.px_per_mm,
@@ -133,10 +167,10 @@ pub fn spawn(deliver: impl Fn(JobResult) + Send + 'static) -> Sender<Job> {
                             render::render_smooth_outlines(&r.segmentation, &sb, Rgb8::new(120, 120, 120), 1.0)
                         }
                     };
-                    (render::render_smooth_fill(&r.segmentation, &sb, &palette), lines)
+                    (render::render_smooth_fill(&r.segmentation, &sb, full), lines)
                 } else {
                     (
-                        render::render_reduced(&r.segmentation, &palette),
+                        render::render_reduced(&r.segmentation, full),
                         render::render_outlines(&r.segmentation, Rgb8::new(150, 150, 150)),
                     )
                 };
@@ -150,8 +184,11 @@ pub fn spawn(deliver: impl Fn(JobResult) + Send + 'static) -> Sender<Job> {
                     px_per_mm: r.px_per_mm,
                     layers,
                     layer: layer_view,
-                    selected: r.selected,
-                    usage: r.usage,
+                    selected: r.selected.clone(),
+                    usage,
+                    background_share,
+                    recommended,
+                    background_color: job.settings.background_color,
                     palette,
                     reduced,
                     outlines,

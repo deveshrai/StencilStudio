@@ -136,6 +136,7 @@ pub fn layer_order(seg: &Segmentation, palette: &Palette) -> Vec<u16> {
     let mut used: Vec<u16> = seg.region_color.clone();
     used.sort_unstable();
     used.dedup();
+    used.retain(|&c| Some(c) != seg.background);
     used.sort_by(|a, b| {
         let la = palette.swatches[*a as usize].lab().l;
         let lb = palette.swatches[*b as usize].lab().l;

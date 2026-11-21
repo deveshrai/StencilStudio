@@ -26,6 +26,7 @@ fn main() {
         .unwrap_or_else(Palette::basic_acrylic_12);
     let settings = Settings {
         color_count: args[2].parse().expect("colors"),
+        remove_background: std::env::var("REMOVE_BG").is_ok(),
         ..Default::default()
     };
 
@@ -34,11 +35,11 @@ fn main() {
     let t_proc = t.elapsed();
     let sb = SmoothBoundaries::build(&r.segmentation, r.sigma_px(&settings));
     let t_vec = t.elapsed();
-    let smooth = render::render_smooth_fill(&r.segmentation, &sb, &palette);
+    let smooth = render::render_smooth_fill(&r.segmentation, &sb, &r.palette);
     let lines = render::render_smooth_outlines(&r.segmentation, &sb, Rgb8::new(30, 30, 30), 1.2);
     let t_render = t.elapsed();
     let opts = StencilOptions::default();
-    let layers = build_layers(&r.segmentation, &sb, &palette, r.px_per_mm, &opts);
+    let layers = build_layers(&r.segmentation, &sb, &r.palette, r.px_per_mm, &opts);
     let t_layers = t.elapsed();
     println!(
         "{:?}: process {t_proc:?}, vectors {:?}, render {:?}, layers {:?}; {} regions",
@@ -48,7 +49,7 @@ fn main() {
         t_layers - t_render,
         r.segmentation.region_count()
     );
-    render::render_reduced(&r.segmentation, &palette)
+    render::render_reduced(&r.segmentation, &r.palette)
         .save(out.join("reduced.png"))
         .unwrap();
     smooth.save(out.join("smooth.png")).unwrap();
@@ -57,7 +58,9 @@ fn main() {
         let base = format!("layer{}", l.number);
         std::fs::write(out.join(format!("{base}.svg")), export::layer_svg(l, &opts)).unwrap();
         std::fs::write(out.join(format!("{base}.dxf")), export::layer_dxf(l, &opts)).unwrap();
-        std::fs::write(out.join(format!("{base}.stl")), export::layer_stl(l, &opts)).unwrap();
+        let stl = export::layer_stl(l, &opts);
+        println!("{base} {}: manifold {}", l.name, manifold(&stl));
+        std::fs::write(out.join(format!("{base}.stl")), stl).unwrap();
         layer_png(l, 4.0).save(out.join(format!("{base}.png"))).unwrap();
         println!(
             "  layer {} {:<16} bridged {:>3} dropped {:>3} left {}",
@@ -94,4 +97,21 @@ fn layer_png(l: &stencil_core::stencil::StencilLayer, px_per_mm: f32) -> image::
         pm.fill_path(&path, &paint, tiny_skia::FillRule::EvenOdd, tf, None);
     }
     image::RgbaImage::from_raw(w, h, pm.take_demultiplied()).unwrap()
+}
+
+/// Closed 2-manifold check: every directed edge is matched by its reverse exactly once.
+fn manifold(stl: &[u8]) -> bool {
+    let n = u32::from_le_bytes(stl[80..84].try_into().unwrap()) as usize;
+    let mut edges = std::collections::HashMap::<_, i32>::new();
+    for i in 0..n {
+        let base = 84 + i * 50 + 12;
+        let p = |v: usize| {
+            let f = |k: usize| u32::from_le_bytes(stl[base + (v * 3 + k) * 4..base + (v * 3 + k) * 4 + 4].try_into().unwrap());
+            (f(0), f(1), f(2))
+        };
+        for v in 0..3 {
+            *edges.entry((p(v), p((v + 1) % 3))).or_default() += 1;
+        }
+    }
+    edges.iter().all(|((a, b), c)| *c == 1 && edges.get(&(*b, *a)) == Some(&1))
 }

@@ -16,6 +16,9 @@ pub struct Segmentation {
     pub region_color: Vec<u16>,
     /// Pixel area per region id.
     pub region_area: Vec<u32>,
+    /// Palette index of the removed background, if any: it is shown in previews but
+    /// never becomes a stencil layer.
+    pub background: Option<u16>,
 }
 
 impl Segmentation {
@@ -76,6 +79,7 @@ impl Segmentation {
             labels,
             region_color,
             region_area,
+            background: None,
         }
     }
 
@@ -162,7 +166,9 @@ impl Segmentation {
         }
         let root_color: Vec<u16> = (0..n as u32).map(|r| color[find(&mut parent, r) as usize]).collect();
         let colors: Vec<u16> = self.labels.iter().map(|&l| root_color[l as usize]).collect();
-        Segmentation::from_color_map(self.width, self.height, &colors)
+        let mut out = Segmentation::from_color_map(self.width, self.height, &colors);
+        out.background = self.background;
+        out
     }
 
     /// True if pixel `i` lies on a boundary with a different region (right or below).

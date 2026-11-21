@@ -85,7 +85,7 @@ pub fn run(job: ExportJob) -> Result<ExportSummary, String> {
     let img = fit_within(&job.source, EXPORT_MAX_SIDE);
     let r = process_with_selection(&img, &job.palette, Some(&job.selected), &job.settings);
     let sb = SmoothBoundaries::build(&r.segmentation, r.sigma_px(&job.settings));
-    let layers = build_layers(&r.segmentation, &sb, &job.palette, r.px_per_mm, &job.options);
+    let layers = build_layers(&r.segmentation, &sb, &r.palette, r.px_per_mm, &job.options);
     let mut summary = ExportSummary {
         files: Vec::new(),
         islands: Vec::new(),

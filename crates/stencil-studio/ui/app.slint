@@ -1,4 +1,4 @@
-import { Button, ComboBox, CheckBox, LineEdit, ListView, SpinBox, ScrollView } from "std-widgets.slint";
+import { Button, ComboBox, CheckBox, LineEdit, ListView, SpinBox, ScrollView, Slider } from "std-widgets.slint";
 import { Theme, Hint } from "theme.slint";
 import { RibbonButton, RibbonGroup, RibbonTab, LabeledSlider } from "ribbon.slint";
 
@@ -12,6 +12,41 @@ export struct LayerChip {
 export struct PickerItem {
     name: string,
     detail: string,
+}
+
+// One background choice in the ribbon: a colour chip with a check ring.
+component BgSwatch inherits Rectangle {
+    in property <color> fill;
+    in property <bool> chosen;
+    in property <string> tip;
+    in property <bool> plus; // "custom" chip shows a + over the colour
+    callback clicked;
+    width: 26px;
+    height: 26px;
+    border-radius: 5px;
+    background: root.fill;
+    border-width: root.chosen ? 2px : 1px;
+    border-color: root.chosen ? Theme.accent : Theme.border;
+    accessible-role: button;
+    accessible-label: root.tip;
+    accessible-action-default => { root.clicked(); }
+    if root.chosen: Rectangle {
+        width: parent.width + 6px;
+        height: parent.height + 6px;
+        border-radius: 7px;
+        border-width: 1px;
+        border-color: Theme.accent;
+    }
+    if root.plus: Text {
+        text: "+";
+        font-size: 16px;
+        font-weight: 700;
+        color: root.fill.to-hsv().value > 0.6 ? #202020 : #ffffff;
+    }
+    ta := TouchArea {
+        clicked => { root.clicked(); }
+        changed has-hover => { Hint.text = self.has-hover ? root.tip : ""; }
+    }
 }
 
 export struct SwatchItem {
@@ -116,6 +151,13 @@ export component AppWindow inherits Window {
     in property <bool> native-dialogs: true;
     // Desktop-style menu bar; hidden on mobile where everything lives in the ribbon.
     in property <bool> show-menu-bar: true;
+    // Startup animation
+    in-out property <bool> splash-visible: true;
+    in-out property <bool> splash-fading;
+    in property <image> splash-frame;
+    in property <string> version: "0.1";
+    callback splash-skip();
+
     in-out property <bool> alert-visible;
     in property <string> alert-title;
     in property <string> alert-text;
@@ -125,6 +167,8 @@ export component AppWindow inherits Window {
     in property <[PickerItem]> picker-items;
     callback picker-chosen(int);
     callback picker-refresh();
+    callback picker-system(bool); // true = Photo Picker (gallery), false = Files app
+    in property <bool> picker-allows-gallery: true;
 
     // ---- Stencil layers view (view-mode 4) ----
     in property <[LayerChip]> layer-chips;
@@ -132,6 +176,27 @@ export component AppWindow inherits Window {
     in property <image> layer-image;
     in property <string> layer-info;
     in property <bool> can-undo;
+
+    // Background removal
+    in-out property <bool> remove-background;
+    in-out property <int> bg-choice: 0; // 0 white, 1 black, 2..4 recommended, 5 custom
+    in property <[color]> bg-recommended;
+    in-out property <color> bg-custom: #5b7fa6;
+    in-out property <string> bg-custom-hex: "#5B7FA6";
+    in-out property <float> bg-hue: 210;
+    in-out property <float> bg-sat: 0.3;
+    in-out property <float> bg-light: 0.5;
+    in property <string> bg-label: "White";
+    callback bg-hsl-changed();
+    callback bg-hex-entered(string);
+    function choose-bg(i: int) {
+        root.bg-choice = i;
+        root.settings-changed();
+    }
+    function toggle-bg() {
+        root.remove-background = !root.remove-background;
+        root.settings-changed();
+    }
     callback layer-selected(int);
     callback canvas-clicked(float, float);
     callback stencil-options-changed();
@@ -291,7 +356,7 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             MenuItem { title: "Crop…"; enabled: false; }
             MenuItem { title: "Adjust Contrast…"; enabled: false; }
-            MenuItem { title: "Remove Background"; enabled: false; }
+            MenuItem { title: root.remove-background ? "Restore Background" : "Remove Background"; shortcut: @keys(Control + Shift + B); activated => { root.toggle-bg(); } }
         }
         Menu {
             title: "Help";
@@ -337,7 +402,7 @@ export component AppWindow inherits Window {
             // ‹ › buttons, which appear only when the ribbon overflows.
             ribbon-flick := Flickable {
             interactive: false;
-            viewport-width: max(self.width, 1240px);
+            viewport-width: max(self.width, 1540px);
             animate viewport-x { duration: 180ms; easing: ease-out; }
 
             // ---- Home ----
@@ -353,6 +418,92 @@ export component AppWindow inherits Window {
                     title: "Mode";
                     RibbonButton { icon: @image-url("icons/stencil.svg"); text: "Stencil"; checked: root.mode == 0; tooltip: "Multi-layer stencil generator"; clicked => { root.set-mode(0); } }
                     RibbonButton { icon: @image-url("icons/pbn.svg"); text: "Paint by Numbers"; checked: root.mode == 1; tooltip: "Numbered paint-by-numbers template"; clicked => { root.set-mode(1); } }
+                }
+                RibbonGroup {
+                    title: "Background";
+                    RibbonButton {
+                        icon: @image-url("icons/bg-remove.svg");
+                        text: "Remove BG";
+                        checked: root.remove-background;
+                        tooltip: "Cut the subject out: the background becomes one flat colour and never gets a stencil layer (Ctrl+Shift+B)";
+                        clicked => { root.toggle-bg(); }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 5px;
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        width: 214px;
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text { text: "Preview on"; color: root.remove-background ? Theme.text-dim : Theme.text-faint; font-size: Theme.font-small; }
+                            Text { text: root.bg-label; color: root.remove-background ? Theme.text : Theme.text-faint; font-size: Theme.font-small; font-weight: 600; overflow: elide; horizontal-stretch: 1; }
+                        }
+                        HorizontalLayout {
+                            spacing: 7px;
+                            alignment: start;
+                            opacity: root.remove-background ? 1 : 0.45;
+                            BgSwatch { fill: #ffffff; chosen: root.bg-choice == 0; tip: "White background"; clicked => { root.remove-background = true; root.choose-bg(0); } }
+                            BgSwatch { fill: #000000; chosen: root.bg-choice == 1; tip: "Black background"; clicked => { root.remove-background = true; root.choose-bg(1); } }
+                            Rectangle { width: 1px; background: Theme.border; }
+                            for c[i] in root.bg-recommended: BgSwatch {
+                                fill: c;
+                                chosen: root.bg-choice == 2 + i;
+                                tip: i == 0 ? "Recommended: sets the subject off best (from your paints)" : "Also recommended";
+                                clicked => { root.remove-background = true; root.choose-bg(2 + i); }
+                            }
+                            if root.bg-recommended.length == 0: Text {
+                                text: "Recommended\ncolours appear here";
+                                font-size: 9.5px;
+                                color: Theme.text-faint;
+                                vertical-alignment: center;
+                            }
+                            Rectangle { width: 1px; background: Theme.border; }
+                            BgSwatch {
+                                fill: root.bg-custom;
+                                plus: true;
+                                chosen: root.bg-choice == 5;
+                                tip: "Custom colour…";
+                                clicked => { root.remove-background = true; root.choose-bg(5); bg-popup.show(); }
+                            }
+                        }
+                    }
+                    bg-popup := PopupWindow {
+                        x: 40px;
+                        y: 60px;
+                        width: 240px;
+                        close-policy: close-on-click-outside;
+                        Rectangle {
+                            background: Theme.panel;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            drop-shadow-blur: 12px;
+                            drop-shadow-color: #00000080;
+                            VerticalLayout {
+                                padding: 10px;
+                                spacing: 6px;
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    Rectangle { width: 36px; height: 36px; border-radius: 5px; background: root.bg-custom; border-width: 1px; border-color: Theme.border; }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        Text { text: "Custom background"; color: Theme.text; font-size: Theme.font-normal; font-weight: 600; }
+                                        Text { text: "Drag the sliders or type a hex code"; color: Theme.text-dim; font-size: Theme.font-small; }
+                                    }
+                                }
+                                LabeledSlider { label: "Hue"; value-text: round(root.bg-hue) + "°"; minimum: 0; maximum: 360; value: root.bg-hue; changed(v) => { root.bg-hue = v; root.bg-hsl-changed(); } }
+                                LabeledSlider { label: "Saturation"; value-text: round(root.bg-sat * 100) + "%"; minimum: 0; maximum: 1; step: 0.01; value: root.bg-sat; changed(v) => { root.bg-sat = v; root.bg-hsl-changed(); } }
+                                LabeledSlider { label: "Lightness"; value-text: round(root.bg-light * 100) + "%"; minimum: 0; maximum: 1; step: 0.01; value: root.bg-light; changed(v) => { root.bg-light = v; root.bg-hsl-changed(); } }
+                                LineEdit {
+                                    text: root.bg-custom-hex;
+                                    placeholder-text: "#RRGGBB";
+                                    accepted(t) => { root.bg-hex-entered(t); }
+                                    edited(t) => { if (t.character-count == 7) { root.bg-hex-entered(t); } }
+                                }
+                            }
+                        }
+                    }
                 }
                 RibbonGroup {
                     title: "Complexity";
@@ -461,7 +612,7 @@ export component AppWindow inherits Window {
                     title: "Adjust";
                     RibbonButton { icon: @image-url("icons/crop.svg"); text: "Crop"; enabled: false; tooltip: "Crop (coming soon)"; }
                     RibbonButton { icon: @image-url("icons/contrast.svg"); text: "Contrast"; enabled: false; tooltip: "Brightness / contrast (coming soon)"; }
-                    RibbonButton { icon: @image-url("icons/bg-remove.svg"); text: "Remove BG"; enabled: false; tooltip: "Background removal (coming soon)"; }
+                    RibbonButton { icon: @image-url("icons/bg-remove.svg"); text: "Remove BG"; checked: root.remove-background; tooltip: "Cut the subject out of its background (Ctrl+Shift+B)"; clicked => { root.toggle-bg(); } }
                 }
                 RibbonGroup {
                     title: "Pre-processing";
@@ -1261,6 +1412,25 @@ export component AppWindow inherits Window {
                     Button { text: "Refresh"; clicked => { root.picker-refresh(); } }
                     Button { text: "Cancel"; clicked => { root.picker-visible = false; } }
                 }
+                HorizontalLayout {
+                    spacing: 8px;
+                    if root.picker-allows-gallery: Button {
+                        text: "Photos…";
+                        primary: true;
+                        horizontal-stretch: 1;
+                        clicked => { root.picker-system(true); }
+                    }
+                    Button {
+                        text: "Browse Files…";
+                        horizontal-stretch: 1;
+                        clicked => { root.picker-system(false); }
+                    }
+                }
+                Text {
+                    text: "Or pick a recent file:";
+                    color: Theme.text-faint;
+                    font-size: Theme.font-small;
+                }
                 if root.picker-items.length == 0: Text {
                     text: root.picker-empty-text;
                     color: Theme.text-dim;
@@ -1311,6 +1481,25 @@ export component AppWindow inherits Window {
                     Button { text: "OK"; primary: true; clicked => { root.alert-visible = false; } }
                 }
             }
+        }
+    }
+
+    // ================= Startup animation =================
+    if root.splash-visible: Rectangle {
+        background: #1c1d1c;
+        opacity: root.splash-fading ? 0 : 1;
+        animate opacity { duration: 380ms; easing: ease-in; }
+        TouchArea { clicked => { root.splash-skip(); } }
+        VerticalLayout {
+            alignment: center;
+            spacing: 4px;
+            property <length> side: min(min(root.width, root.height) * 0.62, 440px);
+            HorizontalLayout {
+                alignment: center;
+                Image { source: root.splash-frame; width: side; height: side; image-rendering: smooth; }
+            }
+            Text { text: "StencilStudio"; color: #f2f2ee; font-size: 26px; font-weight: 600; horizontal-alignment: center; }
+            Text { text: "Stencils and paint-by-numbers from your photos · v" + root.version; color: #8f908c; font-size: 13px; horizontal-alignment: center; }
         }
     }
 }

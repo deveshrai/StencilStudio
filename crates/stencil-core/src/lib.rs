@@ -3,6 +3,7 @@
 //!
 //! This crate is UI-agnostic and must stay free of any windowing/GUI dependencies.
 
+pub mod background;
 pub mod calibration;
 pub mod chart;
 pub mod color;

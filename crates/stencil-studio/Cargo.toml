@@ -13,7 +13,7 @@ name = "stencil-studio"
 path = "src/main.rs"
 
 [dependencies]
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 slint = "1.19"
 stencil-core = { version = "0.1.0", path = "../stencil-core" }
 
@@ -37,6 +37,8 @@ package = "io.github.deveshrai.stencilstudio"
 apk_name = "StencilStudio"
 build_targets = ["aarch64-linux-android", "x86_64-linux-android"]
 resources = "android/res"
+# PickerActivity: system Photo Picker / Files app (a NativeActivity can't get results)
+java_sources = "android/java"
 strip = "strip"
 include_cplusplus_shared = true
 
@@ -48,6 +50,7 @@ target_sdk_version = 35
 label = "StencilStudio"
 icon = "@mipmap/ic_launcher"
 theme = "@style/AppTheme"
+has_code = true
 
 [[package.metadata.android.application.activity]]
 name = "android.app.NativeActivity"
@@ -62,6 +65,11 @@ value = "stencil_studio"
 [[package.metadata.android.application.activity.intent_filter]]
 actions = ["android.intent.action.MAIN"]
 categories = ["android.intent.category.LAUNCHER"]
+
+[[package.metadata.android.application.activity]]
+name = "io.github.deveshrai.stencilstudio.PickerActivity"
+exported = false
+config_changes = "orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|density|uiMode"
 
 # Read photos to open them (Android 13+ / older versions).
 [[package.metadata.android.uses_permission]]

@@ -77,6 +77,14 @@ mod imp {
     pub fn ensure_media_permission() -> bool {
         true
     }
+
+    pub fn system_pick(_kind: PickKind, _gallery: bool) -> bool {
+        false
+    }
+
+    pub fn poll_system_pick() -> Option<Option<PathBuf>> {
+        Some(None)
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -131,6 +139,12 @@ mod imp {
 
     /// Shorten /storage/emulated/0/... to something people recognise.
     pub fn display(p: &Path) -> String {
+        if p.to_string_lossy().contains("/cache/picked/") {
+            return p
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+        }
         p.strip_prefix(STORAGE)
             .map(|r| r.display().to_string())
             .unwrap_or_else(|_| p.display().to_string())
@@ -182,6 +196,82 @@ mod imp {
                 false
             }
         }
+    }
+
+    /// Run `f` with a JNI env, the activity and our `PickerActivity` class.
+    fn with_picker<R>(
+        f: impl FnOnce(&mut jni::JNIEnv, &jni::objects::JObject, &jni::objects::JClass) -> jni::errors::Result<R>,
+    ) -> jni::errors::Result<R> {
+        use jni::objects::{JClass, JObject, JValue};
+        let app = APP.get().ok_or(jni::errors::Error::NullPtr("app"))?;
+        let vm = unsafe { jni::JavaVM::from_raw(app.vm_as_ptr() as *mut jni::sys::JavaVM)? };
+        let mut env = vm.attach_current_thread()?;
+        let activity = unsafe { JObject::from_raw(app.activity_as_ptr() as jni::sys::jobject) };
+        // FindClass on a native thread only sees system classes: use the app's loader.
+        let loader = env
+            .call_method(&activity, "getClassLoader", "()Ljava/lang/ClassLoader;", &[])?
+            .l()?;
+        let name = env.new_string("io.github.deveshrai.stencilstudio.PickerActivity")?;
+        let class = env
+            .call_method(
+                &loader,
+                "loadClass",
+                "(Ljava/lang/String;)Ljava/lang/Class;",
+                &[JValue::Object(&name)],
+            )?
+            .l()?;
+        let class = JClass::from(class);
+        let r = f(&mut env, &activity, &class);
+        if env.exception_check().unwrap_or(false) {
+            let _ = env.exception_describe();
+            let _ = env.exception_clear();
+        }
+        r
+    }
+
+    /// Show the system Photo Picker (`gallery`) or the Files app. Poll the outcome with
+    /// [`poll_system_pick`].
+    pub fn system_pick(kind: PickKind, gallery: bool) -> bool {
+        use jni::objects::JValue;
+        let mime = match kind {
+            PickKind::Image => "image/*",
+            PickKind::Palette => "*/*", // .json has no reliable MIME type on Android
+        };
+        let r = with_picker(|env, activity, class| {
+            let mode = env.new_string(if gallery { "gallery" } else { "files" })?;
+            let mime = env.new_string(mime)?;
+            env.call_static_method(
+                class,
+                "start",
+                "(Landroid/app/Activity;Ljava/lang/String;Ljava/lang/String;)V",
+                &[JValue::Object(activity), JValue::Object(&mode), JValue::Object(&mime)],
+            )?;
+            Ok(())
+        });
+        if let Err(e) = &r {
+            log::warn!("system picker failed: {e}");
+        }
+        r.is_ok()
+    }
+
+    /// `None` while the picker is still open; then `Some(path)` or `Some(None)` if cancelled.
+    pub fn poll_system_pick() -> Option<Option<PathBuf>> {
+        let r = with_picker(|env, _, class| {
+            let pending = env.get_static_field(class, "pending", "Z")?.z()?;
+            if pending {
+                return Ok(None);
+            }
+            let v = env.get_static_field(class, "result", "Ljava/lang/String;")?.l()?;
+            if v.is_null() {
+                return Ok(Some(None));
+            }
+            let s: String = env.get_string(&jni::objects::JString::from(v))?.into();
+            Ok(Some((!s.is_empty()).then(|| PathBuf::from(s))))
+        });
+        r.unwrap_or_else(|e| {
+            log::warn!("picker poll failed: {e}");
+            Some(None)
+        })
     }
 
     fn media_permission() -> jni::errors::Result<bool> {
