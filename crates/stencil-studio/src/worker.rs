@@ -6,7 +6,8 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 use stencil_core::quantize::{Histogram, auto_palette};
-use stencil_core::{Palette, Rgb8, Settings, process, render};
+use stencil_core::vector::SmoothBoundaries;
+use stencil_core::{Mode, Palette, Rgb8, Settings, process, render};
 
 pub struct Job {
     pub generation: u64,
@@ -49,12 +50,25 @@ pub fn spawn(deliver: impl Fn(JobResult) + Send + 'static) -> Sender<Job> {
                     .palette
                     .unwrap_or_else(|| auto_palette(&Histogram::build(&job.image), job.settings.color_count));
                 let r = process(&job.image, &palette, &job.settings);
-                let line = match job.settings.mode {
-                    stencil_core::Mode::Stencil => Rgb8::new(20, 20, 20),
-                    stencil_core::Mode::PaintByNumbers => Rgb8::new(150, 150, 150),
+                let smooth = job.settings.mode == Mode::Stencil || job.settings.smooth_outlines;
+                let (reduced, outlines) = if smooth {
+                    let sb = SmoothBoundaries::build(&r.segmentation, r.sigma_px(&job.settings));
+                    let line = Rgb8::new(25, 25, 25);
+                    let lines = match job.settings.mode {
+                        Mode::Stencil => render::render_smooth_outlines(&r.segmentation, &sb, line, 1.3),
+                        Mode::PaintByNumbers => {
+                            render::render_smooth_outlines(&r.segmentation, &sb, Rgb8::new(120, 120, 120), 1.0)
+                        }
+                    };
+                    (render::render_smooth_fill(&r.segmentation, &sb, &palette), lines)
+                } else {
+                    (
+                        render::render_reduced(&r.segmentation, &palette),
+                        render::render_outlines(&r.segmentation, Rgb8::new(150, 150, 150)),
+                    )
                 };
-                let reduced = to_pixel_buffer(&render::render_reduced(&r.segmentation, &palette));
-                let outlines = to_pixel_buffer(&render::render_outlines(&r.segmentation, line));
+                let reduced = to_pixel_buffer(&reduced);
+                let outlines = to_pixel_buffer(&outlines);
                 deliver(JobResult {
                     generation: job.generation,
                     region_count: r.segmentation.region_count(),

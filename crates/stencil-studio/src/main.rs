@@ -1,6 +1,8 @@
 // Hide the console window on Windows release builds.
 #![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
 
+mod export_job;
+mod print;
 mod worker;
 
 use slint::{ComponentHandle, Image, Model, ModelRc, SharedString, VecModel};
@@ -30,6 +32,9 @@ struct State {
     requested_generation: u64,
     applied_generation: u64,
     tx: Option<Sender<worker::Job>>,
+    /// Palette + chosen colors of the last applied preview (exports reuse them).
+    last_palette: Option<Palette>,
+    last_selected: Vec<usize>,
 }
 
 thread_local! {
@@ -42,6 +47,8 @@ thread_local! {
         requested_generation: 0,
         applied_generation: 0,
         tx: None,
+        last_palette: None,
+        last_selected: Vec::new(),
     });
 }
 
@@ -85,6 +92,8 @@ fn read_settings(ui: &AppWindow, st: &State) -> Settings {
             landscape: ui.get_landscape(),
             margin_mm: 10.0,
         },
+        curve_smoothing_mm: ui.get_curve_smoothing(),
+        smooth_outlines: ui.get_smooth_outlines(),
     }
 }
 
@@ -158,6 +167,8 @@ fn apply_result(ui: &AppWindow, r: worker::JobResult) {
         if r.generation == st.requested_generation {
             ui.set_busy(false);
         }
+        st.last_palette = Some(r.palette.clone());
+        st.last_selected = r.selected.clone();
         let is_auto = ui.get_palette_source() <= 0;
         if is_auto {
             st.auto_palette = r.palette.clone();
@@ -257,10 +268,123 @@ fn edit_palette(ui: &AppWindow, f: impl FnOnce(&mut Palette)) {
     request_processing(ui);
 }
 
+/// Paper for the calibration sheet: US Letter if the user works in US sizes, else A4.
+fn calibration_pdf(ui: &AppWindow) -> Vec<u8> {
+    let us = with_state(|st| {
+        st.papers
+            .get(ui.get_paper_index().max(0) as usize)
+            .is_some_and(|p| p.name.starts_with("US"))
+    });
+    let paper = if us {
+        PaperSize::new("US Letter", 215.9, 279.4)
+    } else {
+        PaperSize::new("A4", 210.0, 297.0)
+    };
+    let (name, names) = with_state(|st| match current_palette(ui, st) {
+        Some(p) => (
+            p.name.clone(),
+            p.swatches.iter().map(|s| s.name.clone()).collect::<Vec<_>>(),
+        ),
+        None => (String::new(), Vec::new()),
+    });
+    stencil_core::calibration::sheet_pdf(&paper, &name, &names)
+}
+
+fn start_export(ui: &AppWindow, format: export_job::Format) {
+    let prepared = with_state(|st| {
+        let source = st.source.clone()?;
+        let palette = st.last_palette.clone()?;
+        Some((source, palette, st.last_selected.clone(), read_settings(ui, st)))
+    });
+    let Some((source, palette, selected, settings)) = prepared else {
+        ui.set_status_text("Open an image and wait for the preview before exporting".into());
+        return;
+    };
+    let stem = std::path::Path::new(ui.get_file_name().as_str())
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "stencil".into());
+    let Some(target) = rfd::FileDialog::new()
+        .set_title(format!("Export Stencil Layers ({})", format.label()))
+        .add_filter(format.label(), &[format.ext()])
+        .set_file_name(format!("{stem}-stencil.{}", format.ext()))
+        .save_file()
+    else {
+        return;
+    };
+    let thickness = ui
+        .get_thickness_names()
+        .row_data(ui.get_thickness_index().max(0) as usize)
+        .and_then(|s| s.trim_end_matches(" mm").parse::<f32>().ok())
+        .unwrap_or(1.0);
+    let options = stencil_core::stencil::StencilOptions {
+        thickness_mm: thickness,
+        frame_mm: ui.get_frame_width(),
+        registration_marks: ui.get_registration_marks(),
+        ..Default::default()
+    };
+    let job = export_job::ExportJob {
+        source,
+        palette,
+        selected,
+        settings,
+        options,
+        format,
+        target,
+    };
+    ui.set_exporting(true);
+    ui.set_status_text(format!("Exporting {} layers…", format.label()).into());
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let t = std::time::Instant::now();
+        let result = export_job::run(job);
+        let elapsed = t.elapsed();
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.set_exporting(false);
+            match result {
+                Ok(summary) => {
+                    let dir = summary
+                        .files
+                        .first()
+                        .and_then(|p| p.parent())
+                        .map(|p| p.display().to_string())
+                        .unwrap_or_default();
+                    let mut msg = format!(
+                        "Exported {} {} layer file(s) to {dir} in {:.1} s",
+                        summary.files.len(),
+                        format.label(),
+                        elapsed.as_secs_f32()
+                    );
+                    if !summary.islands.is_empty() {
+                        let total: usize = summary.islands.iter().map(|i| i.2).sum();
+                        let worst = summary.islands.iter().max_by_key(|i| i.2).unwrap();
+                        msg += &format!(
+                            "  ·  ⚠ {total} floating piece(s) will fall out (most in layer {} {}); bridges are coming next",
+                            worst.0, worst.1
+                        );
+                    }
+                    ui.set_status_text(msg.into());
+                }
+                Err(e) => {
+                    ui.set_status_text(format!("Export failed: {e}").into());
+                    rfd::MessageDialog::new()
+                        .set_level(rfd::MessageLevel::Error)
+                        .set_title("Export failed")
+                        .set_description(e)
+                        .show();
+                }
+            }
+        });
+    });
+}
+
 const SHORTCUTS: &str = "\
 Ctrl+O\tOpen image
 Ctrl+Shift+O\tLoad palette
 Ctrl+Shift+S\tSave palette
+Ctrl+E\tExport stencil layers (SVG)
+Ctrl+P\tPrint calibration sheet
 Ctrl+1 / 2 / 3 / 4\tOriginal / Preview / Outlines / Split
 Ctrl+= / Ctrl+-\tZoom in / out (or Ctrl+scroll)
 Ctrl+0\tFit to window
@@ -422,7 +546,7 @@ fn main() -> Result<(), slint::PlatformError> {
         rfd::MessageDialog::new()
             .set_title("About StencilStudio")
             .set_description(format!(
-                "StencilStudio {}\n\nTurn photos into multi-layer stencils and paint-by-numbers templates, matched to the colors you actually own.",
+                "StencilStudio {}\n\nTurn photos into multi-layer stencils and paint-by-numbers templates, matched to the colors you actually own.\n\nMade with Slint (https://slint.dev), used under the Slint Royalty-free License.",
                 env!("CARGO_PKG_VERSION")
             ))
             .show();
@@ -433,6 +557,56 @@ fn main() -> Result<(), slint::PlatformError> {
             .set_title("Keyboard Shortcuts")
             .set_description(SHORTCUTS)
             .show();
+    });
+
+    let w = ui.as_weak();
+    ui.on_export_layers(move |fmt| {
+        let ui = w.unwrap();
+        let Some(format) = export_job::Format::parse(&fmt) else {
+            return;
+        };
+        start_export(&ui, format);
+    });
+
+    let w = ui.as_weak();
+    ui.on_save_calibration_sheet(move || {
+        let ui = w.unwrap();
+        let Some(path) = rfd::FileDialog::new()
+            .set_title("Save Calibration Sheet")
+            .add_filter("PDF", &["pdf"])
+            .set_file_name("palette-calibration-sheet.pdf")
+            .save_file()
+        else {
+            return;
+        };
+        match std::fs::write(&path, calibration_pdf(&ui)) {
+            Ok(()) => ui.set_status_text(format!("Saved calibration sheet to {}", path.display()).into()),
+            Err(e) => ui.set_status_text(format!("Could not save calibration sheet: {e}").into()),
+        }
+    });
+
+    let w = ui.as_weak();
+    ui.on_print_calibration_sheet(move || {
+        let ui = w.unwrap();
+        let path = std::env::temp_dir().join("StencilStudio-calibration-sheet.pdf");
+        if let Err(e) = std::fs::write(&path, calibration_pdf(&ui)) {
+            ui.set_status_text(format!("Could not prepare calibration sheet: {e}").into());
+            return;
+        }
+        ui.set_status_text("Opening the print dialog…".into());
+        // The OS print flow can block; keep the UI responsive.
+        let weak = ui.as_weak();
+        std::thread::spawn(move || {
+            let msg = match print::print_pdf(&path) {
+                Ok(()) => "Calibration sheet sent to the print dialog".to_string(),
+                Err(e) => format!("Could not print: {e}"),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_status_text(msg.into());
+                }
+            });
+        });
     });
 
     let w = ui.as_weak();

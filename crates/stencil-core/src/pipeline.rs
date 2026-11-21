@@ -26,6 +26,10 @@ pub struct Settings {
     pub smoothing: u32,
     pub metric: DistanceMetric,
     pub output: OutputSize,
+    /// Gaussian radius used to smooth vector outlines (mm at the printed size).
+    pub curve_smoothing_mm: f32,
+    /// Paint-by-numbers: smooth vector outlines (true) or pixel-exact raster outlines.
+    pub smooth_outlines: bool,
 }
 
 impl Default for Settings {
@@ -37,6 +41,8 @@ impl Default for Settings {
             smoothing: 1,
             metric: DistanceMetric::Ciede2000,
             output: OutputSize::default(),
+            curve_smoothing_mm: 0.4,
+            smooth_outlines: true,
         }
     }
 }
@@ -52,6 +58,15 @@ pub struct ProcessResult {
     pub output_mm: (f32, f32),
     /// Merge threshold in pixels that was applied.
     pub min_region_px: u32,
+    /// Image pixels per millimetre at the printed size.
+    pub px_per_mm: f32,
+}
+
+impl ProcessResult {
+    /// Smoothing radius in image pixels for these settings.
+    pub fn sigma_px(&self, settings: &Settings) -> f32 {
+        settings.curve_smoothing_mm * self.px_per_mm
+    }
 }
 
 /// Downscale so the longest side is at most `max_side` (no-op if already smaller).
@@ -69,6 +84,17 @@ pub fn fit_within(img: &RgbImage, max_side: u32) -> RgbImage {
 }
 
 pub fn process(img: &RgbImage, palette: &Palette, settings: &Settings) -> ProcessResult {
+    process_with_selection(img, palette, None, settings)
+}
+
+/// Like [`process`], but optionally forces which palette colors are used (so a
+/// high-resolution export matches the on-screen preview exactly).
+pub fn process_with_selection(
+    img: &RgbImage,
+    palette: &Palette,
+    selection: Option<&[usize]>,
+    settings: &Settings,
+) -> ProcessResult {
     let (w, h) = img.dimensions();
     let smoothed;
     let src = if settings.smoothing > 0 {
@@ -79,7 +105,10 @@ pub fn process(img: &RgbImage, palette: &Palette, settings: &Settings) -> Proces
     };
 
     let hist = Histogram::build(src);
-    let selected = quantize::select_palette_subset(&hist, palette, settings.color_count, settings.metric);
+    let selected = match selection {
+        Some(sel) => sel.to_vec(),
+        None => quantize::select_palette_subset(&hist, palette, settings.color_count, settings.metric),
+    };
     let colors = quantize::map_pixels(src, &hist, palette, &selected, settings.metric);
 
     let px_per_mm = settings.output.px_per_mm(w, h);
@@ -96,6 +125,7 @@ pub fn process(img: &RgbImage, palette: &Palette, settings: &Settings) -> Proces
         usage,
         output_mm: settings.output.fitted_mm(w, h),
         min_region_px,
+        px_per_mm,
     }
 }
 

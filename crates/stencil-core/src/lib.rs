@@ -3,13 +3,18 @@
 //!
 //! This crate is UI-agnostic and must stay free of any windowing/GUI dependencies.
 
+pub mod calibration;
 pub mod color;
+pub mod export;
 pub mod palette;
 pub mod paper;
+pub mod pdf;
 pub mod pipeline;
 pub mod quantize;
 pub mod regions;
 pub mod render;
+pub mod stencil;
+pub mod vector;
 
 pub use color::{DistanceMetric, Lab, Rgb8};
 pub use palette::{Palette, Swatch};

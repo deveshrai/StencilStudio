@@ -82,6 +82,15 @@ export component AppWindow inherits Window {
     in-out property <int> paper-index: 0;
     in-out property <bool> landscape;
 
+    in-out property <bool> smooth-outlines: true; // paint-by-numbers outline style
+    in-out property <float> curve-smoothing: 0.4; // mm
+    in-out property <int> thickness-index: 2;
+    in property <[string]> thickness-names: ["0.6 mm", "0.8 mm", "1.0 mm", "1.2 mm", "1.5 mm", "2.0 mm", "2.5 mm", "3.0 mm"];
+    in-out property <float> frame-width: 12; // mm
+    in-out property <bool> registration-marks: true;
+    in property <bool> exporting;
+    out property <bool> effective-smooth: root.mode == 0 || root.smooth-outlines;
+
     in property <[string]> palette-sources;
     in-out property <int> palette-source: 1;
     in property <bool> palette-editable: true;
@@ -114,6 +123,9 @@ export component AppWindow inherits Window {
     callback show-about();
     callback show-shortcuts();
     callback not-yet(string);
+    callback export-layers(string); // "svg" | "dxf" | "stl"
+    callback save-calibration-sheet();
+    callback print-calibration-sheet();
 
     function set-mode(m: int) {
         root.mode = m;
@@ -171,11 +183,15 @@ export component AppWindow inherits Window {
             MenuSeparator { }
             Menu {
                 title: "Export";
-                MenuItem { title: "Print-Ready PDF…"; enabled: false; }
-                MenuItem { title: "Laser Cut SVG…"; enabled: false; }
-                MenuItem { title: "Laser Cut DXF…"; enabled: false; }
-                MenuItem { title: "3D Print STL / 3MF…"; enabled: false; }
+                MenuItem { title: "Stencil Layers as SVG (Laser)…"; enabled: root.has-image && !root.exporting; shortcut: @keys(Control + E); activated => { root.export-layers("svg"); } }
+                MenuItem { title: "Stencil Layers as DXF (Laser / CNC)…"; enabled: root.has-image && !root.exporting; activated => { root.export-layers("dxf"); } }
+                MenuItem { title: "Stencil Layers as STL (3D Print)…"; enabled: root.has-image && !root.exporting; activated => { root.export-layers("stl"); } }
+                MenuSeparator { }
+                MenuItem { title: "Paint-by-Numbers PDF Packet…"; enabled: false; }
             }
+            MenuSeparator { }
+            MenuItem { title: "Save Calibration Sheet PDF…"; activated => { root.save-calibration-sheet(); } }
+            MenuItem { title: "Print Calibration Sheet…"; shortcut: @keys(Control + P); activated => { root.print-calibration-sheet(); } }
             MenuSeparator { }
             MenuItem { title: "Quit StencilStudio"; role: MenuItemRole.quit; shortcut: @keys(Control + Q); activated => { root.quit-app(); } }
         }
@@ -296,6 +312,49 @@ export component AppWindow inherits Window {
                     }
                 }
                 RibbonGroup {
+                    title: "Outlines";
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        RibbonButton {
+                            large: false;
+                            icon: @image-url("icons/vector.svg");
+                            width: 118px;
+                            text: "Smooth curves";
+                            checked: root.effective-smooth;
+                            enabled: root.mode == 1;
+                            tooltip: root.mode == 0 ? "Stencils always use smooth vector curves" : "Smooth vector outlines";
+                            clicked => { root.smooth-outlines = true; root.settings-changed(); }
+                        }
+                        RibbonButton {
+                            large: false;
+                            icon: @image-url("icons/reduced.svg");
+                            width: 118px;
+                            text: "Pixel exact";
+                            checked: !root.effective-smooth;
+                            enabled: root.mode == 1;
+                            tooltip: root.mode == 0 ? "Stencils always use smooth vector curves" : "Raster outlines that follow the pixels exactly";
+                            clicked => { root.smooth-outlines = false; root.settings-changed(); }
+                        }
+                    }
+                    VerticalLayout {
+                        width: 150px;
+                        padding-left: 6px;
+                        padding-right: 4px;
+                        alignment: center;
+                        LabeledSlider {
+                            label: "Curve smoothing";
+                            value-text: round(root.curve-smoothing * 10) / 10 + " mm";
+                            minimum: 0;
+                            maximum: 2;
+                            step: 0.1;
+                            enabled: root.effective-smooth;
+                            value: root.curve-smoothing;
+                            changed(v) => { root.curve-smoothing = v; root.settings-changed(); }
+                        }
+                    }
+                }
+                RibbonGroup {
                     title: "Output Size";
                     VerticalLayout {
                         width: 200px;
@@ -396,7 +455,8 @@ export component AppWindow inherits Window {
                 }
                 RibbonGroup {
                     title: "Calibration Sheet";
-                    RibbonButton { icon: @image-url("icons/print.svg"); text: "Print Sheet"; enabled: false; tooltip: "Printable palette calibration sheet (coming soon)"; }
+                    RibbonButton { icon: @image-url("icons/print.svg"); text: "Print Sheet"; tooltip: "Print the palette calibration sheet (Ctrl+P)"; clicked => { root.print-calibration-sheet(); } }
+                    RibbonButton { icon: @image-url("icons/pdf.svg"); text: "Save PDF"; tooltip: "Save the calibration sheet as a PDF"; clicked => { root.save-calibration-sheet(); } }
                     RibbonButton { icon: @image-url("icons/scan.svg"); text: "Import Scan"; enabled: false; tooltip: "Read colors from a photo/scan of the filled sheet (coming soon)"; }
                 }
             }
@@ -431,17 +491,51 @@ export component AppWindow inherits Window {
                 padding-left: 4px;
                 alignment: start;
                 RibbonGroup {
-                    title: "Print";
-                    RibbonButton { icon: @image-url("icons/pdf.svg"); text: "PDF Packet"; enabled: false; tooltip: "Print-ready PDF (next milestone)"; }
+                    title: "Stencil Sheet";
+                    VerticalLayout {
+                        width: 150px;
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        alignment: center;
+                        spacing: 2px;
+                        Text { text: "Thickness (3D print)"; color: Theme.text-dim; font-size: Theme.font-small; }
+                        ComboBox { model: root.thickness-names; current-index <=> root.thickness-index; }
+                    }
+                    VerticalLayout {
+                        width: 170px;
+                        padding-left: 4px;
+                        padding-right: 4px;
+                        alignment: center;
+                        spacing: 4px;
+                        LabeledSlider {
+                            label: "Frame";
+                            value-text: round(root.frame-width) + " mm";
+                            minimum: 0;
+                            maximum: 40;
+                            step: 1;
+                            value: root.frame-width;
+                            changed(v) => { root.frame-width = round(v); }
+                        }
+                        CheckBox { text: "Registration holes"; checked <=> root.registration-marks; }
+                    }
                 }
                 RibbonGroup {
                     title: "Laser / Cutter";
-                    RibbonButton { icon: @image-url("icons/vector.svg"); text: "SVG"; enabled: false; tooltip: "Vector SVG (next milestone)"; }
-                    RibbonButton { icon: @image-url("icons/vector.svg"); text: "DXF"; enabled: false; tooltip: "DXF (next milestone)"; }
+                    RibbonButton { icon: @image-url("icons/vector.svg"); text: "SVG"; enabled: root.has-image && !root.exporting; tooltip: "One SVG per layer: red hairline cuts, blue engraved label (Ctrl+E)"; clicked => { root.export-layers("svg"); } }
+                    RibbonButton { icon: @image-url("icons/vector.svg"); text: "DXF"; enabled: root.has-image && !root.exporting; tooltip: "One DXF per layer (R12, mm): CUT and ENGRAVE layers"; clicked => { root.export-layers("dxf"); } }
                 }
                 RibbonGroup {
                     title: "3D Print";
-                    RibbonButton { icon: @image-url("icons/cube.svg"); text: "STL / 3MF"; enabled: false; tooltip: "Flat 3D-printable stencil (phase 2)"; }
+                    RibbonButton { icon: @image-url("icons/cube.svg"); text: "STL"; enabled: root.has-image && !root.exporting; tooltip: "One watertight STL per layer at the chosen thickness"; clicked => { root.export-layers("stl"); } }
+                }
+                RibbonGroup {
+                    title: "Calibration Sheet";
+                    RibbonButton { icon: @image-url("icons/pdf.svg"); text: "Save PDF"; tooltip: "Save the palette calibration sheet as a PDF"; clicked => { root.save-calibration-sheet(); } }
+                    RibbonButton { icon: @image-url("icons/print.svg"); text: "Print"; tooltip: "Print the palette calibration sheet (Ctrl+P)"; clicked => { root.print-calibration-sheet(); } }
+                }
+                RibbonGroup {
+                    title: "Paint by Numbers";
+                    RibbonButton { icon: @image-url("icons/pdf.svg"); text: "PDF Packet"; enabled: false; tooltip: "Numbered outline + legend packet (next milestone)"; }
                 }
             }
         }
@@ -702,6 +796,15 @@ export component AppWindow inherits Window {
                     font-size: 10.5px;
                     font-weight: 700;
                 }
+                if root.exporting: Rectangle {
+                    x: canvas.width - 110px;
+                    y: canvas.height - 64px;
+                    width: 98px;
+                    height: 24px;
+                    border-radius: 12px;
+                    background: Theme.accent;
+                    Text { text: "Exporting…"; color: white; font-size: Theme.font-small; }
+                }
                 if root.busy: Rectangle {
                     x: canvas.width - 110px;
                     y: canvas.height - 34px;
@@ -764,6 +867,41 @@ export component AppWindow inherits Window {
                                 value: root.smoothing;
                                 changed(v) => { root.smoothing = round(v); root.settings-changed(); }
                             }
+
+                            SectionLabel { text: "OUTLINES"; }
+                            CheckBox {
+                                text: "Smooth vector curves";
+                                enabled: root.mode == 1;
+                                checked: root.effective-smooth;
+                                toggled => { root.smooth-outlines = self.checked; root.settings-changed(); }
+                            }
+                            LabeledSlider {
+                                label: "Curve smoothing";
+                                value-text: round(root.curve-smoothing * 10) / 10 + " mm";
+                                minimum: 0;
+                                maximum: 2;
+                                step: 0.1;
+                                enabled: root.effective-smooth;
+                                value: root.curve-smoothing;
+                                changed(v) => { root.curve-smoothing = v; root.settings-changed(); }
+                            }
+
+                            if root.mode == 0: SectionLabel { text: "STENCIL SHEET"; }
+                            if root.mode == 0: HorizontalLayout {
+                                spacing: 8px;
+                                Text { text: "Thickness"; color: Theme.text-dim; font-size: Theme.font-small; vertical-alignment: center; horizontal-stretch: 1; }
+                                ComboBox { width: 110px; model: root.thickness-names; current-index <=> root.thickness-index; }
+                            }
+                            if root.mode == 0: LabeledSlider {
+                                label: "Frame";
+                                value-text: round(root.frame-width) + " mm";
+                                minimum: 0;
+                                maximum: 40;
+                                step: 1;
+                                value: root.frame-width;
+                                changed(v) => { root.frame-width = round(v); }
+                            }
+                            if root.mode == 0: CheckBox { text: "Registration holes"; checked <=> root.registration-marks; }
 
                             SectionLabel { text: "OUTPUT"; }
                             ComboBox {

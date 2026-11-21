@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>StencilStudio</string>
+  <key>CFBundleDisplayName</key><string>StencilStudio</string>
+  <key>CFBundleIdentifier</key><string>io.github.deveshrai.stencilstudio</string>
+  <key>CFBundleExecutable</key><string>StencilStudio</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+  <key>CFBundleVersion</key><string>__VERSION__</string>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>LSApplicationCategoryType</key><string>public.app-category.graphics-design</string>
+  <key>NSHumanReadableCopyright</key><string>Pre-release build. Not for redistribution.</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>Image</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSItemContentTypes</key>
+      <array><string>public.jpeg</string><string>public.png</string><string>org.webmproject.webp</string></array>
+    </dict>
+  </array>
+</dict>
+</plist>
