@@ -116,6 +116,31 @@ pub fn run(job: ExportJob) -> Result<ExportSummary, String> {
     Ok(summary)
 }
 
+/// Paint-by-numbers packet (4-page PDF) at export resolution.
+pub fn pbn_packet(
+    source: &image::RgbImage,
+    palette: &Palette,
+    selected: &[usize],
+    settings: &Settings,
+    title: &str,
+) -> Vec<u8> {
+    let img = fit_within(source, EXPORT_MAX_SIDE);
+    let mask = settings
+        .remove_background
+        .then(|| crate::subject::foreground_mask(&img).0);
+    let r = process_masked(&img, palette, Some(selected), settings, mask.as_deref());
+    // Pixel-exact outlines keep the staircase (sigma 0), matching the preview.
+    let sigma = if settings.smooth_outlines { r.sigma_px(settings) } else { 0.0 };
+    let sb = SmoothBoundaries::build(&r.segmentation, sigma);
+    stencil_core::pbn::packet_pdf(&stencil_core::pbn::PacketInput {
+        seg: &r.segmentation,
+        sb: &sb,
+        palette: &r.palette,
+        output: &settings.output,
+        title,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

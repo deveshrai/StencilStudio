@@ -115,6 +115,36 @@ impl Page {
         self
     }
 
+    /// Add a polyline (mm) to the current path; `close` joins it back to the start.
+    /// Paint the accumulated path with [`Page::fill_even_odd`] or [`Page::stroke`].
+    pub fn poly(&mut self, pts: &[[f32; 2]], close: bool) -> &mut Self {
+        let Some(first) = pts.first() else { return self };
+        let _ = write!(self.ops, "{:.2} {:.2} m", self.x(first[0]), self.y(first[1]));
+        for p in &pts[1..] {
+            let _ = write!(self.ops, " {:.2} {:.2} l", self.x(p[0]), self.y(p[1]));
+        }
+        self.ops.push_str(if close { " h\n" } else { "\n" });
+        self
+    }
+
+    /// Fill the current path (even-odd, so holes stay open), then stroke it too
+    /// when `stroke` is set.
+    pub fn fill_even_odd(&mut self, stroke: bool) -> &mut Self {
+        self.ops.push_str(if stroke { "B*\n" } else { "f*\n" });
+        self
+    }
+
+    pub fn stroke(&mut self) -> &mut Self {
+        self.ops.push_str("S\n");
+        self
+    }
+
+    /// Round line joins and caps (smooth outlines).
+    pub fn round_lines(&mut self) -> &mut Self {
+        self.ops.push_str("1 j 1 J\n");
+        self
+    }
+
     pub fn width_mm(&self) -> f32 {
         self.w_mm
     }
@@ -147,29 +177,36 @@ fn escape(s: &str) -> String {
 }
 
 pub fn write_pdf(pages: &[Page], title: &str) -> Vec<u8> {
-    let mut objs: Vec<String> = Vec::new();
+    let mut objs: Vec<Vec<u8>> = Vec::new();
     // 1 catalog, 2 pages, 3 F1, 4 F2, 5 info, then (page, content) pairs
     let n = pages.len();
     let kids: Vec<String> = (0..n).map(|i| format!("{} 0 R", 6 + i * 2)).collect();
-    objs.push("<< /Type /Catalog /Pages 2 0 R >>".into());
-    objs.push(format!("<< /Type /Pages /Kids [{}] /Count {n} >>", kids.join(" ")));
-    objs.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".into());
-    objs.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>".into());
-    objs.push(format!("<< /Title ({}) /Producer (StencilStudio) >>", escape(title)));
+    objs.push(b"<< /Type /Catalog /Pages 2 0 R >>".to_vec());
+    objs.push(format!("<< /Type /Pages /Kids [{}] /Count {n} >>", kids.join(" ")).into_bytes());
+    objs.push(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>".to_vec());
+    objs.push(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>".to_vec());
+    objs.push(format!("<< /Title ({}) /Producer (StencilStudio) >>", escape(title)).into_bytes());
     for (i, p) in pages.iter().enumerate() {
         objs.push(format!(
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {:.3} {:.3}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents {} 0 R >>",
             p.w_mm * PT_PER_MM,
             p.h_mm * PT_PER_MM,
             7 + i * 2
-        ));
-        objs.push(format!("<< /Length {} >>\nstream\n{}endstream", p.ops.len(), p.ops));
+        ).into_bytes());
+        let z = miniz_oxide::deflate::compress_to_vec_zlib(p.ops.as_bytes(), 6);
+        let mut o = format!("<< /Length {} /Filter /FlateDecode >>\nstream\n", z.len()).into_bytes();
+        o.extend_from_slice(&z);
+        o.extend_from_slice(b"\n");
+        o.extend_from_slice(b"endstream");
+        objs.push(o);
     }
     let mut out: Vec<u8> = b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n".to_vec();
     let mut offsets = Vec::with_capacity(objs.len());
     for (i, o) in objs.iter().enumerate() {
         offsets.push(out.len());
-        out.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+        out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+        out.extend_from_slice(o);
+        out.extend_from_slice(b"\nendobj\n");
     }
     let xref = out.len();
     let mut tail = format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1);
@@ -182,5 +219,26 @@ pub fn write_pdf(pages: &[Page], title: &str) -> Vec<u8> {
         objs.len() + 1
     );
     out.extend_from_slice(tail.as_bytes());
+    out
+}
+
+/// The PDF with every content stream inflated back to text, for tests that look
+/// for drawing operators and strings.
+#[cfg(test)]
+pub fn readable(pdf: &[u8]) -> String {
+    let mut out = String::new();
+    let mut rest = pdf;
+    const START: &[u8] = b">>\nstream\n";
+    while let Some(i) = rest.windows(START.len()).position(|w| w == START) {
+        out.push_str(&String::from_utf8_lossy(&rest[..i + START.len()]));
+        rest = &rest[i + START.len()..];
+        let end = rest.windows(9).position(|w| w == b"endstream").unwrap_or(rest.len());
+        match miniz_oxide::inflate::decompress_to_vec_zlib(&rest[..end]) {
+            Ok(t) => out.push_str(&String::from_utf8_lossy(&t)),
+            Err(_) => out.push_str(&String::from_utf8_lossy(&rest[..end])),
+        }
+        rest = &rest[end..];
+    }
+    out.push_str(&String::from_utf8_lossy(rest));
     out
 }

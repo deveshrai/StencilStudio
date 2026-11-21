@@ -285,7 +285,7 @@ mod tests {
     #[test]
     fn pdf_has_two_pages() {
         let pdf = chart_pdf(&PaperSize::new("A4", 210.0, 297.0), "Acrylics", &["Cadmium Red".into()]);
-        let s = String::from_utf8_lossy(&pdf);
+        let s = crate::pdf::readable(&pdf);
         assert!(s.contains("/Count 2"));
         assert!(s.contains("(Cadmium Red) Tj") && s.contains("(P13) Tj"));
     }

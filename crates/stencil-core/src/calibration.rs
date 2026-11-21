@@ -202,7 +202,7 @@ mod tests {
             "My (Acrylics)",
             &["Cadmium Red".into()],
         );
-        let s = String::from_utf8_lossy(&pdf);
+        let s = crate::pdf::readable(&pdf);
         assert!(s.starts_with("%PDF-1.4") && s.trim_end().ends_with("%%EOF"));
         assert!(s.contains("(Cadmium Red) Tj") && s.contains("My \\(Acrylics\\)"));
         // xref offset must point at the xref table

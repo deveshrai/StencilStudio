@@ -712,6 +712,61 @@ fn start_export(ui: &AppWindow, format: export_job::Format) {
     });
 }
 
+fn start_pbn_export(ui: &AppWindow) {
+    let prepared = with_state(|st| {
+        let source = st.source.clone()?;
+        let palette = st.last_palette.clone()?;
+        Some((source, palette, st.last_selected.clone(), read_settings(ui, st)))
+    });
+    let Some((source, palette, selected, settings)) = prepared else {
+        ui.set_status_text("Open an image and wait for the preview before exporting".into());
+        return;
+    };
+    let file_name = ui.get_file_name().to_string();
+    let stem = Path::new(&file_name)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "picture".into());
+    let Some(target) = platform::save_path(
+        "Export Paint-by-Numbers PDF",
+        "PDF",
+        "pdf",
+        &format!("{stem}-paint-by-numbers.pdf"),
+    ) else {
+        return;
+    };
+    ui.set_exporting(true);
+    ui.set_status_text("Building the paint-by-numbers PDF…".into());
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let t = std::time::Instant::now();
+        let pdf = export_job::pbn_packet(&source, &palette, &selected, &settings, &file_name);
+        let result = std::fs::write(&target, pdf).map_err(|e| format!("{}: {e}", target.display()));
+        let elapsed = t.elapsed();
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            ui.set_exporting(false);
+            match result {
+                Ok(()) => {
+                    ui.set_status_text(
+                        format!(
+                            "Saved the paint-by-numbers PDF (outlines, finished picture, numbered outlines, colour key) to {} in {:.1} s",
+                            platform::pretty(&target),
+                            elapsed.as_secs_f32()
+                        )
+                        .into(),
+                    );
+                    platform::open_file(&target, "application/pdf");
+                }
+                Err(e) => {
+                    ui.set_status_text(format!("Export failed: {e}").into());
+                    show_message(&ui, "Export failed", &e, true);
+                }
+            }
+        });
+    });
+}
+
 fn load_palette_path(ui: &AppWindow, path: &Path) {
     match Palette::load(path) {
         Ok(p) => {
@@ -936,6 +991,7 @@ Ctrl+O\tOpen image
 Ctrl+Shift+O\tLoad palette
 Ctrl+Shift+S\tSave palette
 Ctrl+E\tExport stencil layers (SVG)
+Ctrl+Shift+E\tExport paint-by-numbers PDF
 Ctrl+P\tPrint manual color chart
 Ctrl+1 / 2 / 3 / 4\tOriginal / Preview / Outlines / Split
 Ctrl+5\tStencil layers (click to add/remove bridges)
@@ -1188,6 +1244,10 @@ pub fn run(initial: Option<PathBuf>) -> Result<(), slint::PlatformError> {
     let w = ui.as_weak();
     ui.on_export_layers(move |fmt| {
         let ui = w.unwrap();
+        if fmt == "pbn" {
+            start_pbn_export(&ui);
+            return;
+        }
         let Some(format) = export_job::Format::parse(&fmt) else {
             return;
         };

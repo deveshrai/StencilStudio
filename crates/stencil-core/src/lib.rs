@@ -11,6 +11,7 @@ pub mod export;
 mod islands;
 pub mod palette;
 pub mod paper;
+pub mod pbn;
 pub mod pdf;
 pub mod pdf_image;
 pub mod pipeline;

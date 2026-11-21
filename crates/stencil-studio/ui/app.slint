@@ -259,7 +259,7 @@ export component AppWindow inherits Window {
     callback show-about();
     callback show-shortcuts();
     callback not-yet(string);
-    callback export-layers(string); // "svg" | "dxf" | "stl"
+    callback export-layers(string); // "svg" | "dxf" | "stl" | "pbn"
     callback save-calibration-sheet();
     callback print-calibration-sheet();
     callback save-color-chart();
@@ -327,7 +327,7 @@ export component AppWindow inherits Window {
                 MenuItem { title: "Stencil Layers as DXF (Laser / CNC)…"; enabled: root.has-image && !root.exporting; activated => { root.export-layers("dxf"); } }
                 MenuItem { title: "Stencil Layers as STL (3D Print)…"; enabled: root.has-image && !root.exporting; activated => { root.export-layers("stl"); } }
                 MenuSeparator { }
-                MenuItem { title: "Paint-by-Numbers PDF Packet…"; enabled: false; }
+                MenuItem { title: "Paint-by-Numbers PDF Packet…"; enabled: root.has-image && !root.exporting; shortcut: @keys(Control + Shift + E); activated => { root.export-layers("pbn"); } }
             }
             MenuSeparator { }
             Menu {
@@ -824,7 +824,7 @@ export component AppWindow inherits Window {
                 }
                 RibbonGroup {
                     title: "Paint by Numbers";
-                    RibbonButton { icon: @image-url("icons/pdf.svg"); text: "PDF Packet"; enabled: false; tooltip: "Numbered outline + legend packet (next milestone)"; }
+                    RibbonButton { icon: @image-url("icons/pdf.svg"); text: "PDF Packet"; enabled: root.has-image && !root.exporting; tooltip: "4-page PDF: outlines, finished picture, numbered outlines, colour key with test boxes (Ctrl+Shift+E)"; clicked => { root.export-layers("pbn"); } }
                 }
             }
             }

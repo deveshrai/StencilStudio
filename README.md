@@ -122,7 +122,18 @@ Bridge width (default 1.2 mm), the drop size and an on/off switch are in **Expor
 ![Paint-by-numbers preview of a portrait with 8 colors](docs/screenshots/paint-by-numbers.png)
 
 Paint-by-numbers uses the same color engine and minimum-region rules, so every cell is big enough to paint. Outlines can be **smooth vector curves** or **pixel-exact**.
-*(Number placement and the printable PDF packet with a color legend are next on the roadmap.)*
+### The PDF packet
+
+**Export → PDF Packet** (`Ctrl+Shift+E`) saves a 4-page PDF on your chosen paper size:
+
+1. **Outlines to paint:** light gray lines only.
+2. **Finished picture:** every area filled with its paint, as a reference.
+3. **Numbered outlines:** each area carries its paint number, placed at the point deepest inside the shape and sized to fit.
+4. **Colour key:** number, printed colour, an **empty box for a test dab** of your paint, the paint name and how much of the picture it covers.
+
+Paint a dab in each empty box and compare it with the printed colour before you start. Numbers run lightest to darkest, the same order as the stencil layers. A removed background is numbered too, unless it's white (then it's just the paper). On Android the PDF is saved to Documents/StencilStudio and opens in the PDF viewer.
+
+![The four pages of the paint-by-numbers PDF](docs/screenshots/paint-by-numbers-pdf.png)
 
 ## Calibrating to your real paints
 
@@ -167,6 +178,7 @@ In tests with a warm cast and a 90° rotation, colours came back within 1–2 RG
 |---|---|
 | Ctrl+O | Open image |
 | Ctrl+E | Export stencil layers (SVG) |
+| Ctrl+Shift+E | Export the paint-by-numbers PDF |
 | Ctrl+P | Print manual color chart |
 | Ctrl+1 / 2 / 3 / 4 | Original / Preview / Outlines / Split view |
 | Ctrl+5 | Stencil layers (click to add/remove bridges) |
@@ -233,7 +245,8 @@ cargo run -p stencil-core --example calibration_sheet -- sheet.pdf [letter]
 - **0.1.4:** Layers view with click-to-add/remove bridges and undo; new puppy app icon.
 - **0.1.5:** Remove background (white / black / recommended / custom preview colour); hummingbird app icon traced to clean vectors and a startup animation; Android system Photos and Files pickers.
 - **0.1.6:** subject detection via Apple Vision (macOS) and a bundled on-device model (Android and others); calibration scan import from a photo, PDF or the Android camera; Android print dialog, and saved PDFs open in a viewer.
-- **Next:** kerf offset, paint-by-numbers numbers + PDF packet, color wheel, crop/contrast, a brush to fix the background mask, project files.
+- **0.1.7:** paint-by-numbers PDF: outlines, finished picture, numbered outlines and a colour key with test-dab boxes.
+- **Next:** kerf offset, color wheel, crop/contrast, a brush to fix the background mask, project files.
 - **Android preview:** same app on tablets/foldables; in-app image browser, pinch-zoom, touch-friendly ribbon.
 - **Later:** iPad build (Apple Vision subject lifting, camera, document scanner), Android share intents, 3MF, paint-mixing suggestions, Windows/Linux packages, iPad build.
 
