@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manual — StencilStudio</title>
+<meta name="description" content="The StencilStudio manual: opening photos, choosing paints, calibrating colours, removing backgrounds, stencil layers and bridges, exports, paint-by-numbers PDFs, Android, shortcuts and FAQ.">
+<meta name="theme-color" content="#0b0c0b">
+<link rel="icon" type="image/png" href="img/favicon.png">
+<link rel="apple-touch-icon" href="img/apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap">
+    <a class="brand" href="./"><img src="img/icon.png" alt="">StencilStudio</a>
+    <ul>
+      <li><a href="./#features">Features</a></li>
+      <li><a href="./#how">How it works</a></li>
+      <li><a href="./#formats">Export</a></li>
+      <li><a href="./#platforms">Platforms</a></li>
+      <li><a href="manual.html" class="on">Manual</a></li>
+    </ul>
+    <span class="pill-soon">Early access · downloads soon</span>
+  </div>
+</nav>
+
+<div class="wrap man-wrap">
+  <aside class="toc" id="toc">
+    <h4>User manual</h4>
+    <ol>
+      <li><a href="#start">Quick start</a></li>
+      <li><a href="#interface">The interface</a></li>
+      <li><a href="#opening">Opening a photo</a></li>
+      <li><a href="#palettes">Palettes</a></li>
+      <li><a href="#calibration">Calibrating your paints</a>
+        <ul><li class="sub"><a href="#chart">Manual colour chart</a></li><li class="sub"><a href="#scan">Scan sheet import</a></li></ul></li>
+      <li><a href="#background">Remove background</a></li>
+      <li><a href="#tuning">Tuning the result</a></li>
+      <li><a href="#stencil">Stencil mode</a>
+        <ul><li class="sub"><a href="#layers">Layers &amp; bridges</a></li><li class="sub"><a href="#bridges">Floating pieces</a></li></ul></li>
+      <li><a href="#export">Exporting stencils</a></li>
+      <li><a href="#pbn">Paint by numbers</a></li>
+      <li><a href="#android">Android</a></li>
+      <li><a href="#shortcuts">Keyboard shortcuts</a></li>
+      <li><a href="#faq">FAQ &amp; troubleshooting</a></li>
+      <li><a href="#engine">How the engine works</a></li>
+    </ol>
+  </aside>
+
+  <main class="doc">
+    <h1>StencilStudio manual</h1>
+    <p class="intro">Everything you need to turn a photo into cut-ready stencils or a paint-by-numbers kit, matched to the paints you own.</p>
+
+    <h2 id="start"><small>Getting started</small>Quick start</h2>
+    <ol>
+      <li><strong>Open a photo</strong> with <kbd>Ctrl</kbd>+<kbd>O</kbd> (<kbd>⌘</kbd>+<kbd>O</kbd> on a Mac). JPG, PNG and WebP are supported.</li>
+      <li><strong>Choose your paints.</strong> Pick a built-in palette, load your own, or let StencilStudio derive colours from the photo (<em>Auto</em>).</li>
+      <li><strong>Optionally remove the background</strong> with <strong>Remove BG</strong> so the subject gets all the colours.</li>
+      <li><strong>Choose a mode:</strong> <strong>Stencil</strong> makes one cut sheet per colour. <strong>Paint by Numbers</strong> makes an outline template.</li>
+      <li><strong>Tune it live.</strong> Change the number of colours, minimum region size and smoothing. The preview updates in about a tenth of a second.</li>
+      <li><strong>Export</strong> SVG or DXF for a laser or cutter, STL for a 3D printer, or a four-page PDF for paint by numbers.</li>
+    </ol>
+    <figure><div class="shot"><img src="img/stencil-split.jpg" alt="StencilStudio's main window with the split preview" width="1600" height="1000"></div><figcaption>The main window: palette on the left, the preview in the middle, properties on the right.</figcaption></figure>
+    <div class="callout tip"><p><b>Tip:</b> do one eyeball check against the printed Manual Color Chart before importing a scan sheet. See <a href="#calibration">Calibrating your paints</a>.</p></div>
+
+    <h2 id="interface"><small>Orientation</small>The interface</h2>
+    <p>StencilStudio has a ribbon, menus and keyboard shortcuts, like a desktop design tool.</p>
+    <h3>The ribbon</h3>
+    <table>
+      <tr><th>Tab</th><th>What's on it</th></tr>
+      <tr><td>Home</td><td>Open Image, Load Palette, the mode switch (Stencil / Paint by Numbers), Remove BG and background colours, the colour-count and minimum-region sliders, outline style, curve smoothing, output paper size and the preview mode.</td></tr>
+      <tr><td>Image</td><td>Adjustments, pre-processing (smoothing) and colour matching, including <em>Focus on subject</em>.</td></tr>
+      <tr><td>Palette</td><td>The library, the list of colours, and the calibration tools: Manual Color Chart, Scan Sheet and Import Scan.</td></tr>
+      <tr><td>View</td><td>Preview mode, zoom and which panels are shown.</td></tr>
+      <tr><td>Export</td><td>Stencil sheet options (thickness, frame, registration holes), floating-piece bridging, and the export buttons for SVG, DXF, STL and the paint-by-numbers PDF packet.</td></tr>
+    </table>
+    <p>Collapse the ribbon with <kbd>Ctrl</kbd>+<kbd>F1</kbd> for more room. The same actions are in the menu bar (File, Edit, View, Image, Help).</p>
+    <h3>The three panels</h3>
+    <ul>
+      <li><strong>Palette</strong> (left): your colours, with each colour's nearest chart code and, after processing, how much of the picture it covers. A filled dot marks the colours in use. Toggle with <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>L</kbd>.</li>
+      <li><strong>Preview</strong> (middle): the picture in one of five views (below). Zoom with <kbd>Ctrl</kbd>+scroll and drag to pan.</li>
+      <li><strong>Properties</strong> (right): every setting for the current mode, the output size and document info. Toggle with <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd>.</li>
+    </ul>
+    <h3>Preview views</h3>
+    <table>
+      <tr><th>Key</th><th>View</th><th>Use it to…</th></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>1</kbd></td><td>Original</td><td>See your photo as imported.</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>2</kbd></td><td>Colour-reduced preview</td><td>See the picture as it will look in your paints.</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>3</kbd></td><td>Cut / outline view</td><td>See exactly where cuts or lines will go.</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>4</kbd></td><td>Split</td><td>Compare original and preview with a draggable divider.</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>5</kbd></td><td>Stencil layers</td><td>Inspect each sheet and edit its bridges.</td></tr>
+    </table>
+    <p>The status bar shows the last processing time, the number of regions and the zoom level.</p>
+
+    <h2 id="opening"><small>Input</small>Opening a photo</h2>
+    <p>Use <strong>Open Image</strong> (<kbd>Ctrl</kbd>+<kbd>O</kbd>) and choose a JPG, PNG or WebP. Large photos are fine: the live preview works at up to 1600 px on the long side, and exports are generated at up to 3000 px, from the full-size original.</p>
+    <p>On the desktop you can also pass an image on the command line, for example <code>StencilStudio photo.jpg</code>. On Android, Open Image offers the camera, the system Photos picker and the Files app. See <a href="#android">Android</a>.</p>
+    <div class="callout tip"><p><b>Choosing a photo:</b> a clear subject with good contrast gives the best stencils. Photos with a lot of fine, noisy detail need a larger minimum region size or fewer colours to stay cuttable.</p></div>
+
+    <h2 id="palettes"><small>Colour</small>Palettes</h2>
+    <p>A palette is the list of paints, pens or pencils you own. Colours are matched perceptually (CIELAB, with CIEDE2000 distance), not by raw RGB, so the result looks right to the eye.</p>
+    <h3>Choosing and editing</h3>
+    <ul>
+      <li><strong>Built-in palettes:</strong> Basic 12-Color Acrylic, Black and White, and a 5-step Grayscale.</li>
+      <li><strong>Auto</strong> derives the colours from the photo itself.</li>
+      <li><strong>Load Palette</strong> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd>) and <strong>Save Palette As</strong> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>) read and write palettes as JSON files.</li>
+      <li><strong>Add Color</strong> adds a paint to the palette, and <strong>Edit → Remove Selected Color</strong> removes the selected one.</li>
+    </ul>
+    <h3>How many colours, and which?</h3>
+    <p>Set the number of colours with the <strong>Colors</strong> slider, or with <kbd>Ctrl</kbd>+<kbd>]</kbd> and <kbd>Ctrl</kbd>+<kbd>[</kbd>. StencilStudio then picks the subset of <em>your</em> palette that best reproduces the photo. It weighs the choice toward what you would notice:</p>
+    <ul>
+      <li><strong>Vivid colours count more</strong>, so a red subject stays red rather than turning into a safe brown.</li>
+      <li><strong>Sharp, in-focus areas count more.</strong> <em>Focus on subject</em> is on by default (Image tab → Color Matching). A subject in front of a blurry background gets its colours first. Turn it off if you want every part of the picture weighted equally.</li>
+    </ul>
+
+    <h2 id="calibration"><small>Accuracy</small>Calibrating your paints</h2>
+    <p>Paint on paper never looks quite like it does on a screen. StencilStudio offers two printable aids in the <strong>Palette</strong> tab (also under File → Calibration). They print on A4 or US Letter, following your selected paper size.</p>
+    <figure><div class="shot paper"><img src="img/calibration.jpg" alt="The Manual Color Chart, My Paints record sheet and scan sheet" loading="lazy" width="1600" height="736"></div><figcaption>The Manual Color Chart, the “My Paints” sheet, and the scan sheet.</figcaption></figure>
+
+    <h3 id="chart">Manual Color Chart</h3>
+    <p>This is the match-by-eye method, and the most trustworthy one.</p>
+    <ol>
+      <li>Choose <strong>Print Manual Color Chart</strong> (<kbd>Ctrl</kbd>+<kbd>P</kbd>). Page 1 has 208 colour patches with grid codes: six vivid rows, six muted and earth-tone rows, and a row of grays. Page 2, <em>My Paints</em>, has a box for each of your colours.</li>
+      <li>Dab each paint in its box and let it dry.</li>
+      <li>In daylight, hold each dab next to the chart and find the closest patch.</li>
+      <li>In the app, select that colour in the palette, type the patch code (for example <code>D7</code>) in the <strong>Chart</strong> field, and press Enter.</li>
+    </ol>
+    <p>You match against the <em>printout</em>, not the screen, which removes most of the screen-versus-printer mismatch. The palette list also shows each colour's nearest chart code, so you can check existing colours at a glance.</p>
+
+    <h3 id="scan">Scan sheet import</h3>
+    <p>The scan sheet reads many colours at once from a single photo or scan.</p>
+    <ol>
+      <li>Print the <strong>Scan Sheet</strong>, fill each box with one paint, and let it dry. Boxes are numbered in the same order as your palette.</li>
+      <li><strong>Do one eyeball check first.</strong> Compare two or three paints against the Manual Color Chart in daylight. The app reminds you once per session. Cameras and scanners shift colour with the light, and this one check catches it.</li>
+      <li>Choose <strong>Import Scan</strong> and give it a photo (JPG, PNG or WebP), a scanner's or scanner app's <strong>PDF</strong>, or, on Android, use the <strong>camera</strong> directly.</li>
+      <li><strong>Review.</strong> Each box's colour is shown beside the palette colour it will replace. Choose <strong>Apply Colours</strong> when you're happy.</li>
+    </ol>
+    <figure><div class="shot"><img src="img/scan-import.jpg" alt="Reviewing colours read from a scanned calibration sheet on Android" loading="lazy" width="1600" height="1000"></div><figcaption>The review screen: old colour, read colour, then Apply.</figcaption></figure>
+    <h3>What the reader handles</h3>
+    <ul>
+      <li><strong>Corner markers:</strong> it finds the four markers by shape. The hollow one marks the bottom-right, so rotated and upside-down photos are fine.</li>
+      <li><strong>Perspective and paper:</strong> it corrects perspective and tells A4 from US Letter by itself.</li>
+      <li><strong>Colour:</strong> it uses the printed gray strip to remove colour casts and exposure errors.</li>
+    </ul>
+    <p>In tests with a strong warm cast and a 90° rotation, colours came back within 1–2 RGB levels.</p>
+    <div class="callout"><p><b>White and very pale paints</b> can't be told apart from the paper, so they're reported as empty. Set those by hand. With the <em>Auto</em> palette selected, the scanned colours become a new palette called “Scanned paints”.</p></div>
+
+    <h2 id="background"><small>Subject</small>Remove background</h2>
+    <p><strong>Remove BG</strong> (Home tab, Image menu, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd>) separates the subject from its background. Press it again to restore the background.</p>
+    <figure><div class="tablet"><img src="img/remove-background.jpg" alt="The hummingbird with its background removed, previewed on a recommended Sap Green" loading="lazy" width="1600" height="1000"></div><figcaption>The hummingbird in three colours with the background removed, previewed on a recommended Sap Green.</figcaption></figure>
+    <h3>What changes</h3>
+    <ul>
+      <li><strong>Every colour goes to the subject.</strong> In a three-colour example the bird gets yellow, red and blue instead of spending a colour on a dark blurred background.</li>
+      <li><strong>The background is one flat area.</strong> It never becomes a stencil layer, and it stays a single region in paint by numbers. Paint it in your chosen colour first, or leave the surface bare.</li>
+    </ul>
+    <h3>Choosing the background colour</h3>
+    <p>In the Background group, pick <strong>White</strong>, <strong>Black</strong>, one of three <strong>recommended</strong> paints from your palette (chosen to stand out from the subject's main colours), or <strong>Custom</strong> (hue, saturation and lightness sliders, or a hex code).</p>
+    <h3>Subject detection</h3>
+    <p>StencilStudio uses the best detector available on your device, and the status bar shows which one was used.</p>
+    <table>
+      <tr><th>Where</th><th>Detector</th></tr>
+      <tr><td>macOS 14 and later</td><td><strong>Apple Vision</strong>, the same subject lifting used by Photos and Preview. About 0.2–0.3 s.</td></tr>
+      <tr><td>Android, Windows, Linux, older macOS</td><td>A bundled <strong>on-device model</strong>, U²-Net-p (4.6 MB, Apache-2.0). About 0.5 s on a laptop and about 1 s on a tablet, once per photo.</td></tr>
+      <tr><td>Fallback</td><td>A colour-model segmentation that needs no model.</td></tr>
+    </table>
+    <p>Either way, the detector's soft mask is snapped to the photo's real edges at full resolution, and exports use the same detection at export resolution. Nothing leaves your device. If the detector treats something in front of the subject as part of it, such as a branch held in front of a face, a brush to correct the mask is planned.</p>
+
+    <h2 id="tuning"><small>Controls</small>Tuning the result</h2>
+    <table>
+      <tr><th>Control</th><th>What it does</th></tr>
+      <tr><td>Colors</td><td>How many paints from your palette to use.</td></tr>
+      <tr><td>Min region</td><td>Areas smaller than this many mm² (measured at your chosen paper size) merge into a neighbour, so nothing is too small to cut or paint. Larger values give simpler, easier stencils.</td></tr>
+      <tr><td>Smoothing</td><td>A pre-blur in pixels that removes photo noise before colours are chosen.</td></tr>
+      <tr><td>Smooth curves / Pixel exact</td><td>Vector-smooth outlines or exact pixel outlines (used for paint-by-numbers).</td></tr>
+      <tr><td>Curve smoothing</td><td>How much outlines are rounded, in millimetres at the printed size, so the preview and the exported file match.</td></tr>
+      <tr><td>Output size</td><td>The paper (A4, A3, A5, US Letter, Tabloid, canvas and printer or laser bed sizes), and orientation. It sets the physical scale of everything.</td></tr>
+    </table>
+    <div class="callout tip"><p><b>Tip:</b> change the output size first. Region sizes are measured in millimetres, so a bigger sheet makes the same photo easier to cut.</p></div>
+
+    <h2 id="stencil"><small>Mode</small>Stencil mode</h2>
+    <p>In Stencil mode, StencilStudio creates one sheet per colour. For each sheet, the solid material is the frame plus every <em>other</em> colour, and the cut-outs are where this colour goes. Stack the sheets, lightest first, and paint through each one.</p>
+    <figure><div class="shot"><img src="img/stencil-outlines.jpg" alt="Cut / outline view of a portrait stencil" loading="lazy" width="1600" height="1000"></div><figcaption>The Outlines view (Ctrl+3) shows exactly where the cuts will be.</figcaption></figure>
+    <p>Outlines are true vector curves. Each border between two colours is smoothed <strong>once</strong> and shared by both sides, so neighbouring shapes always meet exactly. There are no slivers or gaps between layers.</p>
+    <p>Every layer gets a <strong>solid frame</strong> (12 mm by default) and <strong>four round registration holes</strong> in the same place on every sheet. Push pins or dowels through them to line the layers up as you paint.</p>
+
+    <h3 id="layers">Layers view and editing bridges</h3>
+    <p><strong>Layers</strong> (<kbd>Ctrl</kbd>+<kbd>5</kbd>, or Preview → Layers) shows each sheet exactly as it will be cut. Pick a layer from the chips at the top.</p>
+    <figure><div class="tablet"><img src="img/layers-bridges.jpg" alt="Layers view with automatic blue bridges and one green bridge added by hand" loading="lazy" width="1400" height="875"></div><figcaption>The black layer with automatic (blue) bridges and one added by hand (green).</figcaption></figure>
+    <ul>
+      <li><strong>What you see:</strong> cut-outs in the layer's paint colour on the sheet material. Automatic bridges are <strong>blue</strong>, bridges you added are <strong>green</strong>, and anything still floating is <strong>red</strong>.</li>
+      <li><strong>Click a bridge</strong> to remove it.</li>
+      <li><strong>Click inside a cut</strong> to add a bridge across it at that spot. It runs horizontally or vertically, whichever is shorter, to the material on both sides. Clicking works with a finger too.</li>
+      <li><strong>Undo</strong> with <kbd>Ctrl</kbd>+<kbd>Z</kbd> (redo with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd>). <strong>Reset bridges</strong> returns the layer to automatic.</li>
+      <li><strong>Exports match.</strong> Edits are stored in millimetres on the sheet, so SVG, DXF and STL contain exactly what you see.</li>
+    </ul>
+
+    <h3 id="bridges">Floating pieces and bridges</h3>
+    <p>Some cut-outs leave a piece of sheet with nothing holding it, like the centre of an “O” or the pupil of an eye. That piece would fall out. StencilStudio handles each one by its size:</p>
+    <ul>
+      <li><strong>Large enough pieces</strong> are held by <strong>two thin bridges on opposite sides</strong>. Each bridge is a straight strip to the nearest solid material, left-right or up-down, whichever is shorter.</li>
+      <li><strong>Tiny pieces</strong> (below <em>Drop pieces under</em>, 6 mm² by default) are dropped, which simply makes that spot part of the paint area.</li>
+      <li><strong>Mid-size pieces</strong> are also dropped when their bridges would be much longer than the piece itself, instead of being held by long, spindly strips. Pieces of 100 mm² or more are always kept.</li>
+    </ul>
+    <p>Bridge width (default 1.2 mm), the drop size and an on/off switch live in <strong>Export → Floating Pieces</strong> and in the Properties panel. After each export, the status bar reports how many pieces were bridged and how many were dropped.</p>
+
+    <h2 id="export"><small>Output</small>Exporting stencils</h2>
+    <p>Export writes <strong>one file per colour, lightest first</strong>, named <code>&lt;name&gt;-L&lt;n&gt;-&lt;color&gt;.&lt;ext&gt;</code>. Exports are generated from the full-size original at up to 3000 px, which is finer than the preview.</p>
+    <figure><div class="shot paper"><img src="img/stencil-layers.jpg" alt="Four exported stencil layers with bridges and registration holes" loading="lazy" width="1400" height="863"></div><figcaption>Four layers exported from the hummingbird at four colours (gray is sheet material, white is cut away).</figcaption></figure>
+    <table>
+      <tr><th>Format</th><th>For</th><th>Details</th></tr>
+      <tr><td>SVG</td><td>Laser and vinyl cutters</td><td>Millimetre units, red 0.01 mm hairline cuts, a blue engraved layer label, and Inkscape layers named <em>Cut</em> and <em>Engrave</em>.</td></tr>
+      <tr><td>DXF</td><td>Laser, CNC, CAD</td><td>AutoCAD R12 for the widest compatibility, in millimetres, with <code>CUT</code> and <code>ENGRAVE</code> layers.</td></tr>
+      <tr><td>STL</td><td>3D printing</td><td>Watertight, manifold sheets at the thickness you choose (0.6–3 mm, for example 0.8, 1 or 2 mm).</td></tr>
+    </table>
+    <p>Set the sheet thickness, frame width and registration holes in <strong>Export → Stencil Sheet</strong>. Use <kbd>Ctrl</kbd>+<kbd>E</kbd> to export SVG quickly.</p>
+
+    <h2 id="pbn"><small>Mode</small>Paint by numbers</h2>
+    <p>Paint-by-numbers mode (<kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd>) uses the same colour engine and minimum-region rules, so every cell is big enough to paint. Outlines can be <strong>smooth vector curves</strong> or <strong>pixel-exact</strong>.</p>
+    <figure><div class="shot"><img src="img/paint-by-numbers.jpg" alt="Paint-by-numbers preview of a portrait with eight colours" loading="lazy" width="1600" height="1000"></div><figcaption>The paint-by-numbers preview of a portrait in eight colours.</figcaption></figure>
+    <h3>The PDF packet</h3>
+    <p><strong>Export → PDF Packet</strong> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>) saves a four-page PDF on your chosen paper size:</p>
+    <ol>
+      <li><strong>Outlines to paint:</strong> light gray lines only, with no numbers.</li>
+      <li><strong>Finished picture:</strong> every area filled with its paint, as a reference.</li>
+      <li><strong>Numbered outlines:</strong> each area carries its paint number, placed at the point deepest inside the shape and sized to fit.</li>
+      <li><strong>Colour key:</strong> number, printed colour, an <strong>empty box for a test dab</strong> of your paint, the paint name, its hex code and how much of the picture it covers.</li>
+    </ol>
+    <figure><div class="shot paper"><img src="img/paint-by-numbers-pdf.jpg" alt="The four pages of the paint-by-numbers PDF" loading="lazy" width="1904" height="679"></div><figcaption>The four pages of the packet.</figcaption></figure>
+    <p>Paint a dab in each empty box and compare it with the printed colour before you start. Numbers run lightest to darkest, the same order as the stencil layers. A removed background is numbered too, unless it's white, in which case it's just the paper.</p>
+    <div class="callout"><p><b>Very small areas</b> get a small number (down to about 3.5 pt). If a number feels too tight, raise <em>Min region</em> or lower the colour count and export again.</p></div>
+
+    <h2 id="android"><small>Mobile</small>Android</h2>
+    <p>StencilStudio runs on Android tablets and foldables (Android 10 and later, arm64). It has the same ribbon with touch on top: two-finger pinch to zoom, drag to pan, and keyboard shortcuts when a keyboard is attached.</p>
+    <ul>
+      <li><strong>Open Image</strong> and <strong>Import Scan</strong> offer <strong>Camera…</strong>, the system <strong>Photos</strong> picker (no permission needed), <strong>Browse Files…</strong> (the Files app, including Drive and other providers), and a quick list of recent images in Pictures, DCIM, Download and Documents. Android asks for photo access the first time you use that list.</li>
+      <li><strong>Printing</strong> opens the Android print dialog, where you can choose any printer or <em>Save as PDF</em>.</li>
+      <li><strong>Saving</strong> a chart, sheet or packet stores it in <strong>Documents/StencilStudio</strong> and opens it in your PDF viewer. Stencil exports go to the same folder.</li>
+      <li>The desktop menu bar is hidden, because everything is in the ribbon. On narrow screens, use the ‹ › buttons to scroll the ribbon.</li>
+    </ul>
+
+    <h2 id="shortcuts"><small>Reference</small>Keyboard shortcuts</h2>
+    <p><kbd>Ctrl</kbd> is <kbd>⌘</kbd> on macOS. The full list is under <strong>Help → Keyboard Shortcuts</strong> (<kbd>Ctrl</kbd>+<kbd>/</kbd>).</p>
+    <table class="keys">
+      <tr><th>Keys</th><th>Action</th></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>O</kbd></td><td>Open image</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>O</kbd></td><td>Load palette</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></td><td>Save palette</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>E</kbd></td><td>Export stencil layers (SVG)</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></td><td>Export the paint-by-numbers PDF</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>P</kbd></td><td>Print the manual colour chart</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>1</kbd> / <kbd>2</kbd> / <kbd>3</kbd> / <kbd>4</kbd></td><td>Original / Preview / Outlines / Split</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>5</kbd></td><td>Stencil layers (click to add or remove bridges)</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>Undo / redo a bridge edit</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd></td><td>Zoom in / out (or <kbd>Ctrl</kbd>+scroll at the cursor)</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>0</kbd></td><td>Fit to window</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>0</kbd></td><td>Actual pixels</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>]</kbd> / <kbd>Ctrl</kbd>+<kbd>[</kbd></td><td>More / fewer colours</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd></td><td>Remove / restore the background</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>S</kbd> / <kbd>P</kbd></td><td>Stencil / Paint-by-Numbers mode</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>L</kbd> / <kbd>R</kbd></td><td>Toggle the palette / properties panel</td></tr>
+      <tr><td><kbd>Ctrl</kbd>+<kbd>F1</kbd></td><td>Collapse the ribbon</td></tr>
+      <tr><td>Drag</td><td>Pan the canvas</td></tr>
+    </table>
+
+    <h2 id="faq"><small>Help</small>FAQ &amp; troubleshooting</h2>
+    <details><summary>Is my photo uploaded anywhere?</summary><p>No. StencilStudio runs entirely on your device. Subject detection uses Apple Vision on macOS, or a small model bundled inside the app. There is no account and no cloud processing.</p></details>
+    <details><summary>The colours on screen don't match my paints.</summary><p>That's expected: paint on paper never looks like it does on a display. Print the Manual Color Chart and match your dried paint to a patch by eye, then enter the code. See <a href="#chart">Manual colour chart</a>.</p></details>
+    <details><summary>Why did a small piece disappear from a layer?</summary><p>Pieces below <em>Drop pieces under</em> (6 mm² by default), and mid-size pieces that would need very long bridges, are dropped so the sheet stays strong. That spot simply becomes part of the paint area. Lower the drop size, or raise the sheet size, to keep more.</p></details>
+    <details><summary>A piece of my stencil is floating or falls out.</summary><p>Turn on <em>Bridge floating pieces</em> in Export → Floating Pieces, or open the Layers view and click inside the cut to add a bridge by hand. Floating pieces show in red.</p></details>
+    <details><summary>The background removal included something it shouldn't.</summary><p>The detector counts anything in front of the subject as part of it, such as a branch held before a face. A brush to correct the mask is planned. For now, try another photo or crop, or turn Remove BG off.</p></details>
+    <details><summary>Import Scan says it couldn't find the corner markers.</summary><p>Make sure all four corner markers are in the frame, the page is flat and well lit, and the photo is in focus. Rotation and tilt are fine. Shadows across a marker can confuse it.</p></details>
+    <details><summary>My white paint shows as empty after a scan import.</summary><p>White and very pale paints can't be told apart from the paper. Set their colours by hand in the palette.</p></details>
+    <details><summary>The first launch on a Mac is blocked.</summary><p>Early builds are ad-hoc signed and not notarised. Right-click the app and choose <strong>Open</strong> the first time. Store releases are planned.</p></details>
+    <details><summary>Which operating systems are supported?</summary><p>macOS (universal, Apple Silicon and Intel) and Android tablets and foldables are available in early access. iPhone and iPad, Windows and Linux are coming.</p></details>
+
+    <h2 id="engine"><small>Under the hood</small>How the engine works</h2>
+    <ol>
+      <li>The image is downscaled to at most 1600 px for the live preview (3000 px for export) and optionally pre-blurred.</li>
+      <li>A 5-bit-per-channel histogram is converted to CIELAB.</li>
+      <li><strong>Palette selection</strong> picks the <em>k</em> colours from your palette that minimise the pixel-weighted CIEDE2000 error (greedy plus swap refinement), with chroma-weighted saliency. <em>Auto</em> mode runs weighted k-means++ instead.</li>
+      <li>With <strong>Remove background</strong>, a subject mask is estimated first (Apple Vision or U²-Net-p, edge-refined with colour models). Background pixels are left out of the histogram and become one extra “Background” region that is never a layer.</li>
+      <li>Pixels are mapped to the chosen colours and labelled into 4-connected regions. Regions smaller than the minimum size merge into the neighbour they share the longest border with.</li>
+      <li><strong>Vectorisation:</strong> region borders are split into chains between junctions. Each chain is Gaussian-smoothed once with its ends pinned, so every outline built from them shares identical edges.</li>
+      <li><strong>Stencil sheets:</strong> for each colour, solid material is the frame plus every other colour. Floating pieces are bridged or dropped, then the outlines are merged with the bridges using a robust polygon union.</li>
+      <li><strong>Writers</strong> produce SVG, DXF, binary STL and the PDF packet from the same geometry.</li>
+    </ol>
+    <p>StencilStudio is written in Rust, with the UI built in <a href="https://slint.dev">Slint</a>. The core engine has no UI dependencies.</p>
+
+    <div class="callout" style="margin-top:60px"><p>Designed and built by <a href="https://github.com/deveshrai"><b>Devesh Rai</b></a>. Subject detection uses Apple Vision on macOS and <a href="https://github.com/xuebinqin/U-2-Net">U²-Net-p</a> (Apache-2.0) elsewhere.</p></div>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap foot">
+    <div>
+      <a class="brand" href="./"><img src="img/icon.png" alt="">StencilStudio</a>
+      <p class="credit">Designed and built by <a href="https://github.com/deveshrai">Devesh Rai</a>.</p>
+      <p>Made with Rust and <a href="https://slint.dev">Slint</a>. Sample photography is used for demonstration only.</p>
+    </div>
+    <div class="links">
+      <a href="./">Home</a>
+      <a href="./#platforms">Platforms</a>
+      <a href="#start">Back to top ↑</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var links = Array.prototype.slice.call(document.querySelectorAll(".toc a"));
+  var map = {};
+  links.forEach(function (a) { map[a.getAttribute("href").slice(1)] = a; });
+  var heads = Array.prototype.slice.call(document.querySelectorAll(".doc h2[id], .doc h3[id]"));
+  function spy() {
+    var cur = null, y = window.scrollY + 130;
+    heads.forEach(function (h) { if (h.offsetTop <= y) cur = h.id; });
+    links.forEach(function (a) { a.classList.remove("on"); });
+    if (cur && map[cur]) map[cur].classList.add("on");
+  }
+  window.addEventListener("scroll", spy, { passive: true });
+  spy();
+})();
+</script>
+</body>
+</html>
