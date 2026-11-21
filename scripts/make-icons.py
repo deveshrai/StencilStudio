@@ -10,7 +10,6 @@ traced from the supplied artwork with
 Outputs
   packaging/macos/AppIcon.icns                 macOS app icon (rounded dark tile)
   crates/stencil-studio/ui/icons/app-icon.png  window icon
-  crates/stencil-studio/ui/splash-logo.png     splash still / fallback
   crates/stencil-studio/android/res/...        Android adaptive + legacy launcher icons
   docs/icon.png                                README logo
 """
@@ -72,10 +71,6 @@ def foreground_svg():
 </svg>'''
 
 
-def splash_svg():
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">{bird(1.0, -6.8, 0.6)}</svg>'''
-
-
 def main():
     tmp = tempfile.mkdtemp()
 
@@ -90,7 +85,6 @@ def main():
 
     run("sips", "-z", "256", "256", base, "--out", os.path.join(ROOT, "crates/stencil-studio/ui/icons/app-icon.png"))
     run("sips", "-z", "256", "256", base, "--out", os.path.join(ROOT, "docs/icon.png"))
-    render(splash_svg(), 512, os.path.join(ROOT, "crates/stencil-studio/ui/splash-logo.png"))
 
     # Android: legacy (the rounded tile) + adaptive foreground on a flat backdrop
     tile = os.path.join(tmp, "tile.png")
